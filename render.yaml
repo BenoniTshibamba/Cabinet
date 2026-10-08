@@ -1,0 +1,63 @@
+# Cabinet Élite Juridique — Render Blueprint (déploiement en 1 clic).
+# Le Dockerfile construit l'image ; ce fichier déclare le service web,
+# le disque persistant (la base SQLite et les documents téléversés y survivent
+# aux redéploiements) et les variables d'environnement.
+#
+# Déploiement : tableau de bord Render → New → Blueprint → sélectionnez ce dépôt.
+# Après le déploiement, ajustez CORS_ORIGINS ci-dessous avec l'URL publique réelle
+# du service (https://<nom-du-service>.onrender.com).
+
+services:
+  - type: web
+    name: cabinet-elite-juridique
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    disk:
+      name: cej-data
+      mountPath: /app/backend/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      # SQLite sur le disque persistant (la migration tourne automatiquement au démarrage).
+      - key: DATABASE_PATH
+        value: /app/backend/data/cabinet-elite.db
+      # Documents téléversés sur le disque persistant eux aussi.
+      - key: UPLOAD_DIR
+        value: /app/backend/data/uploads
+      # Secret de signature des jetons JWT (généré aléatoirement par Render).
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_REFRESH_SECRET
+        generateValue: true
+      # --- Version officielle : premier administrateur (créé au 1er démarrage) ---
+      # Définissez ADMIN_EMAIL / ADMIN_PASSWORD ici ; sinon un mot de passe
+      # aléatoire est généré et affiché une fois dans les logs du service.
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      # Origine autorisée pour l'API : l'URL publique du service.
+      # Remplacez par la vraie URL après le premier déploiement si vous renommez le service.
+      - key: CORS_ORIGINS
+        value: https://cabinet-elite-juridique.onrender.com
+      # --- Assistant IA : fournisseur + clé (une seule clé suffit : chat + embeddings) ---
+      # LLM_PROVIDER : gemini (défaut) ou openai
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: LLM_API_KEY
+        sync: false
+      # --- Courriels d'échéances (optionnel) : laissez vide pour désactiver ---
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: MAIL_FROM
+        sync: false

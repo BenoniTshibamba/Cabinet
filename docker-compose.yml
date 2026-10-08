@@ -1,0 +1,17 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_PATH: /app/backend/data/cabinet-elite.db
+      JWT_ACCESS_SECRET: change_me_access_secret
+      JWT_ACCESS_EXPIRES: 15m
+      PORT: "4000"
+      UPLOAD_DIR: /app/backend/data/uploads
+    ports:
+      - "4000:4000"
+    volumes:
+      - sqlite_data:/app/backend/data
+
+volumes:
+  sqlite_data:
