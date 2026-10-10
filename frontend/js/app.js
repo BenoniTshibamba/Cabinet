@@ -605,10 +605,20 @@ function parseHash() {
   return { name: parts[0] || 'home', id: parts[1] };
 }
 
+/** Paramètres de requête éventuels dans le hash (ex. #/reset-password?token=…). */
+function hashQuery() {
+  const idx = location.hash.indexOf('?');
+  if (idx < 0) return {};
+  return Object.fromEntries(new URLSearchParams(location.hash.slice(idx + 1)));
+}
+
 let currentUser = null;
 
 async function route() {
-  const { name, id } = parseHash();
+  const { name: rawName, id: rawId } = parseHash();
+  const name = rawName.split('?')[0];
+  const id = rawId ? rawId.split('?')[0] : rawId;
+  const q = hashQuery();
   clearMsgPoll();
   clearTimerTick();
 
@@ -616,6 +626,16 @@ async function route() {
   // rien et permet d'ouvrir directement la page de connexion via #/login.
   if (name === 'login') {
     return renderLogin();
+  }
+
+  // Réinitialisation du mot de passe (lien reçu par courriel).
+  if (name === 'reset-password') {
+    return renderResetPassword(q.token);
+  }
+
+  // Retour de la connexion Google (échange du code contre une session).
+  if (name === 'oauth' && id === 'callback') {
+    return handleOauthCallback(q.code);
   }
 
   // Page publique "L'application" (vitrine du logiciel), accessible à tous.
@@ -1221,6 +1241,51 @@ function renderLogin() {
   const errorBox = h('p', { class: 'form-error', hidden: true });
   const submitBtn = h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, t('seConnecter'));
   const registerBtn = h('button', { class: 'btn btn-link btn-block', type: 'button', onclick: () => openRegistrationModal() }, t('demanderAcces'));
+  const forgotBtn = h('button', { class: 'btn btn-link btn-block', type: 'button', onclick: () => openForgotPasswordModal() }, t('forgotPassword'));
+  const googleWrap = h('div');
+
+  function completeLogin(body) {
+    setSession({ accessToken: body.accessToken, refreshToken: body.refreshToken, user: body.user });
+    // Direction explicite vers le tableau de bord : rester sur #/home donnait
+    // l'impression que la connexion n'avait rien fait, car c'est la même page
+    // publique (juste avec un bouton « Mon espace » en plus, facile à manquer).
+    location.hash = '#/dashboard';
+    if (location.hash === '#/dashboard') route();
+  }
+
+  // Seconde étape : code 2FA (après mot de passe ou Google).
+  function renderTwofaStep(tempToken) {
+    const code = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', required: true, maxlength: 10, placeholder: '123456' });
+    const err = h('p', { class: 'form-error', hidden: true });
+    const btn = h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, t('twofaVerify'));
+    const form = h('form', {
+      class: 'login-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        err.hidden = true;
+        btn.disabled = true;
+        try {
+          const body = await api.twofaLogin(tempToken, code.value.trim());
+          completeLogin(body);
+        } catch (e2) {
+          err.textContent = errorMessage(e2);
+          err.hidden = false;
+        } finally {
+          btn.disabled = false;
+        }
+      },
+    }, h('p', { class: 'auth-tagline' }, t('twofaLoginIntro')), field(t('twofaCode'), code), err, btn);
+    clear(root).append(
+      h('div', { class: 'auth-screen' },
+        h('div', { class: 'auth-card' },
+          h('div', { class: 'brand' }, h('span', { class: 'brand-mark' }, '⚖'), h('span', { class: 'brand-name' }, t('brand'))),
+          h('p', { class: 'auth-tagline' }, t('twofaLoginTitle')),
+          form,
+        ),
+      ),
+    );
+    code.focus();
+  }
 
   const form = h(
     'form',
@@ -1233,12 +1298,11 @@ function renderLogin() {
         submitBtn.textContent = t('authConnecting');
         try {
           const body = await api.login(email.value.trim(), password.value);
-          setSession({ accessToken: body.accessToken, refreshToken: body.refreshToken, user: body.user });
-          // Direction explicite vers le tableau de bord : rester sur #/home donnait
-          // l'impression que la connexion n'avait rien fait, car c'est la même page
-          // publique (juste avec un bouton « Mon espace » en plus, facile à manquer).
-          location.hash = '#/dashboard';
-          if (location.hash === '#/dashboard') await route();
+          if (body.twoFactorRequired) {
+            renderTwofaStep(body.tempToken);
+            return;
+          }
+          completeLogin(body);
         } catch (err) {
           errorBox.textContent = errorMessage(err);
           errorBox.hidden = false;
@@ -1252,6 +1316,8 @@ function renderLogin() {
     field(t('authPassword'), password),
     errorBox,
     submitBtn,
+    forgotBtn,
+    googleWrap,
     registerBtn,
   );
 
@@ -1269,6 +1335,125 @@ function renderLogin() {
     ),
   );
   email.focus();
+
+  // Bouton Google : affiché seulement si l'OAuth est configuré côté serveur.
+  api.oauthGoogleStatus()
+    .then((s) => {
+      if (s?.enabled) {
+        googleWrap.append(
+          h('button', { class: 'btn btn-secondary btn-block', type: 'button', onclick: () => { location.href = '/api/auth/oauth/google'; } },
+            h('span', { 'aria-hidden': 'true' }, 'G '), t('googleLogin')),
+        );
+      }
+    })
+    .catch(() => { /* OAuth indisponible : on n'affiche rien */ });
+
+  // Retour du callback Google avec 2FA : on affiche directement l'étape du code.
+  const q = hashQuery();
+  if (q.twofa) {
+    history.replaceState(null, '', '#/login');
+    renderTwofaStep(q.twofa);
+  }
+}
+
+/** Modale « mot de passe oublié » : demande l'email, réponse toujours générique. */
+function openForgotPasswordModal() {
+  const f = { email: h('input', { type: 'email', required: true, autocomplete: 'email' }) };
+  const errorBox = h('p', { class: 'form-error', hidden: true });
+  const okBox = h('p', { class: 'form-ok', hidden: true });
+  const sendBtn = h('button', { class: 'btn btn-primary', type: 'submit' }, t('forgotSend'));
+  const form = h('form', {
+    class: 'stacked-form',
+    onsubmit: async (e) => {
+      e.preventDefault();
+      errorBox.hidden = true;
+      okBox.hidden = true;
+      sendBtn.disabled = true;
+      try {
+        await api.forgotPassword(f.email.value.trim());
+        okBox.textContent = t('forgotSent');
+        okBox.hidden = false;
+        f.email.value = '';
+      } catch (err) {
+        errorBox.textContent = errorMessage(err);
+        errorBox.hidden = false;
+      } finally {
+        sendBtn.disabled = false;
+      }
+    },
+  },
+    h('p', { class: 'muted' }, t('forgotIntro')),
+    field(t('authEmail'), f.email),
+    errorBox,
+    okBox,
+    sendBtn,
+  );
+  openModal(t('forgotTitle'), form);
+}
+
+/** Page de réinitialisation (lien reçu par courriel : #/reset-password?token=…). */
+function renderResetPassword(token) {
+  document.title = t('resetTitle');
+  const pwd = h('input', { type: 'password', required: true, minlength: 10, autocomplete: 'new-password', 'aria-describedby': 'pwd-reset-hint' });
+  const errorBox = h('p', { class: 'form-error', hidden: true });
+  const submitBtn = h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, t('resetSubmit'));
+  const body = token
+    ? h('form', {
+        class: 'login-form',
+        onsubmit: async (e) => {
+          e.preventDefault();
+          errorBox.hidden = true;
+          submitBtn.disabled = true;
+          try {
+            await api.resetPassword(token, pwd.value);
+            toast(t('resetDone'));
+            location.hash = '#/login';
+          } catch (err) {
+            errorBox.textContent = errorMessage(err);
+            errorBox.hidden = false;
+          } finally {
+            submitBtn.disabled = false;
+          }
+        },
+      },
+        h('label', { class: 'field' }, h('span', null, t('resetNew')), pwd, h('small', { class: 'muted', id: 'pwd-reset-hint' }, t('pwdRule'))),
+        errorBox,
+        submitBtn)
+    : h('p', { class: 'form-error' }, t('errGeneric'));
+  clear(root).append(
+    h('div', { class: 'auth-screen' },
+      h('div', { class: 'auth-card' },
+        h('div', { class: 'brand' }, h('span', { class: 'brand-mark' }, '⚖'), h('span', { class: 'brand-name' }, t('brand'))),
+        h('p', { class: 'auth-tagline' }, t('resetTitle')),
+        body,
+      ),
+    ),
+  );
+  pwd?.focus?.();
+}
+
+/** Retour du callback Google : échange le code contre une session. */
+async function handleOauthCallback(code) {
+  document.title = t('authTitle');
+  clear(root).append(
+    h('div', { class: 'auth-screen' },
+      h('div', { class: 'auth-card' }, h('p', { class: 'auth-tagline' }, t('authConnecting')))),
+  );
+  history.replaceState(null, '', '#/login');
+  if (!code) {
+    location.hash = '#/login';
+    return;
+  }
+  try {
+    const body = await api.oauthGoogleComplete(code);
+    setSession({ accessToken: body.accessToken, refreshToken: body.refreshToken, user: body.user });
+    location.hash = '#/dashboard';
+    if (location.hash === '#/dashboard') await route();
+  } catch {
+    location.hash = '#/login';
+    await route();
+    toast(t('errGeneric'), 'error');
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1372,6 +1557,7 @@ function renderShell(perms) {
           h('button', { class: 'avatar-btn', type: 'button', 'aria-label': t('profileTitle'), title: t('profileTitle'), onclick: openProfileModal }, userAvatar(currentUser)),
           h('div', { class: 'sidebar-user-info' }, h('strong', { id: 'user-name' }, `${currentUser.firstName} ${currentUser.lastName}`), h('span', { id: 'user-role' }, ROLE_LABEL()[currentUser.role] ?? currentUser.role)),
           h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('pwdChange'), title: t('pwdChange'), onclick: openChangePasswordModal }, icon('lock')),
+          h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('twofaTitle'), title: t('twofaTitle'), onclick: openTwoFactorModal }, icon('shield')),
           h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('seDeconnecter'), onclick: logout }, icon('logout')),
         ),
         h('div', { class: 'sidebar-credit' }, ...bb24Credit()),
@@ -1507,6 +1693,110 @@ function openChangePasswordModal() {  const f = {
     h('button', { class: 'btn btn-primary', type: 'submit' }, t('pwdChange')),
   );
   const close = openModal(t('pwdChange'), form);
+}
+
+/** Modale « Sécurité » : activation / désactivation de l'authentification à deux facteurs (TOTP). */
+async function openTwoFactorModal() {
+  const wrap = h('div', { class: 'stacked-form' }, h('p', { class: 'loading' }, t('loading')));
+  const close = openModal(t('twofaTitle'), wrap);
+  const errBox = h('p', { class: 'form-error', hidden: true });
+
+  function showError(err) {
+    errBox.textContent = errorMessage(err);
+    errBox.hidden = false;
+  }
+
+  async function render() {
+    clear(wrap);
+    wrap.append(errBox);
+    errBox.hidden = true;
+    let status;
+    try {
+      status = await api.twofaStatus();
+    } catch (err) {
+      showError(err);
+      return;
+    }
+    wrap.append(h('p', { class: 'muted' }, t('twofaIntro')));
+    if (status?.enabled) {
+      wrap.append(
+        h('p', { class: 'form-ok' }, t('twofaStatusOn')),
+        h('button', { class: 'btn btn-secondary', type: 'button', onclick: () => renderDisable() }, t('twofaDisable')),
+      );
+      return;
+    }
+    wrap.append(
+      h('p', { class: 'muted' }, t('twofaStatusOff')),
+      h('button', { class: 'btn btn-primary', type: 'button', onclick: async () => {
+        try {
+          const setup = await api.twofaSetup();
+          renderVerify(setup);
+        } catch (err) { showError(err); }
+      } }, t('twofaSetup')),
+    );
+  }
+
+  function renderVerify(setup) {
+    const code = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', required: true, maxlength: 10, placeholder: '123456' });
+    const btn = h('button', { class: 'btn btn-primary', type: 'submit' }, t('twofaVerify'));
+    const form = h('form', {
+      class: 'stacked-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        errBox.hidden = true;
+        btn.disabled = true;
+        try {
+          await api.twofaVerify(code.value.trim());
+          toast(t('twofaEnabled'));
+          render();
+        } catch (err) {
+          showError(err);
+        } finally {
+          btn.disabled = false;
+        }
+      },
+    },
+      h('p', { class: 'muted' }, t('twofaScan')),
+      h('div', { style: 'text-align:center' }, h('img', { src: setup.qrDataUrl, alt: 'QR code', style: 'max-width:220px' })),
+      h('p', { class: 'muted' }, t('twofaManual'), ' ', h('code', null, setup.secret)),
+      field(t('twofaCode'), code),
+      btn,
+    );
+    clear(wrap);
+    wrap.append(errBox, form);
+    code.focus();
+  }
+
+  function renderDisable() {
+    const pwd = h('input', { type: 'password', required: true, autocomplete: 'current-password' });
+    const btn = h('button', { class: 'btn btn-secondary', type: 'submit' }, t('twofaDisable'));
+    const form = h('form', {
+      class: 'stacked-form',
+      onsubmit: async (e) => {
+        e.preventDefault();
+        errBox.hidden = true;
+        btn.disabled = true;
+        try {
+          await api.twofaDisable(pwd.value);
+          toast(t('twofaDisabled'));
+          render();
+        } catch (err) {
+          showError(err);
+        } finally {
+          btn.disabled = false;
+        }
+      },
+    },
+      h('p', { class: 'muted' }, t('twofaDisableConfirm')),
+      field(t('authPassword'), pwd),
+      btn,
+    );
+    clear(wrap);
+    wrap.append(errBox, form);
+    pwd.focus();
+  }
+
+  await render();
 }
 
 /** Modale profil : photo de profil (aperçu instantané, changer / retirer). */
@@ -4223,11 +4513,32 @@ async function viewInvoices(main) {
 
 async function viewUsers(main) {
   const tableBody = h('tbody');
+  const perms = new Set(currentUser?.permissions ?? []);
+  const canDelete = perms.has('users.delete');
+  const canUpdate = perms.has('users.update');
 
   async function load() {
     const rows = await guarded(() => api.users());
     clear(tableBody);
     for (const u of rows ?? []) {
+      const actions = [];
+      if (u.isActive) {
+        if (canDelete) {
+          actions.push(h('button', { class: 'link-btn', type: 'button', onclick: async () => {
+            if (!confirm(t('userDeactivateConfirm'))) return;
+            const r = await guarded(() => api.deleteUser(u.id));
+            if (r !== undefined) {
+              toast(t('userDeactivated'));
+              load();
+            }
+          } }, t('userDeactivate')));
+        }
+      } else if (canUpdate) {
+        actions.push(h('button', { class: 'link-btn', type: 'button', onclick: async () => {
+          await guarded(() => api.updateUser(u.id, { isActive: true }));
+          load();
+        } }, t('userActivate')));
+      }
       tableBody.append(
         h(
           'tr',
@@ -4236,10 +4547,7 @@ async function viewUsers(main) {
           h('td', null, u.email),
           h('td', null, ROLE_LABEL()[u.role] ?? u.role),
           h('td', null, h('span', { class: `status status-${u.isActive ? 'active' : 'inactive'}` }, h('span', { class: 'status-dot' }), u.isActive ? t('userActive') : t('userDisabled'))),
-          h('td', null, h('button', { class: 'link-btn', type: 'button', onclick: async () => {
-            await guarded(() => api.updateUser(u.id, { isActive: !u.isActive }));
-            load();
-          } }, u.isActive ? t('userDeactivate') : t('userActivate'))),
+          h('td', null, ...actions),
         ),
       );
     }

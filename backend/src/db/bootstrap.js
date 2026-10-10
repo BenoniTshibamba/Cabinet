@@ -35,6 +35,9 @@ export async function ensureDatabase() {
   try { pool.exec(`ALTER TABLE site_settings ADD COLUMN hero_images TEXT NOT NULL DEFAULT '[]'`); } catch (err) { if (!String(err?.message).includes('duplicate column name')) throw err; }
   // Photo de profil des utilisateurs.
   try { pool.exec('ALTER TABLE users ADD COLUMN avatar_filename TEXT'); } catch (err) { if (!String(err?.message).includes('duplicate column name')) throw err; }
+  // Authentification à deux facteurs (TOTP) : secret + drapeau d'activation.
+  try { pool.exec('ALTER TABLE users ADD COLUMN totp_secret TEXT'); } catch (err) { if (!String(err?.message).includes('duplicate column name')) throw err; }
+  try { pool.exec('ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0'); } catch (err) { if (!String(err?.message).includes('duplicate column name')) throw err; }
   // Adresse structurée du cabinet (carte publique sur la page d'accueil).
   // Remplace le champ unique `address` (conservé pour compatibilité).
   // Valeurs par défaut africaines (Kinshasa, RDC) — modifiables dans Personnalisation.

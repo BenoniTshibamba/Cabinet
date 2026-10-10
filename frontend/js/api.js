@@ -84,6 +84,15 @@ export const api = {
   login: (email, password) => request('/auth/login', { method: 'POST', body: { email, password }, retry: false }),
   me: () => request('/auth/me'),
   changePassword: (currentPassword, newPassword) => request('/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } }),
+  forgotPassword: (email) => request('/auth/forgot-password', { method: 'POST', body: { email }, retry: false }),
+  resetPassword: (token, newPassword) => request('/auth/reset-password', { method: 'POST', body: { token, newPassword }, retry: false }),
+  twofaStatus: () => request('/auth/2fa/status'),
+  twofaSetup: () => request('/auth/2fa/setup', { method: 'POST' }),
+  twofaVerify: (code) => request('/auth/2fa/verify', { method: 'POST', body: { code } }),
+  twofaDisable: (password) => request('/auth/2fa/disable', { method: 'POST', body: { password } }),
+  twofaLogin: (tempToken, code) => request('/auth/2fa/login', { method: 'POST', body: { tempToken, code }, retry: false }),
+  oauthGoogleStatus: () => request('/auth/oauth/google/status', { retry: false }),
+  oauthGoogleComplete: (code) => request('/auth/oauth/google/complete', { method: 'POST', body: { code }, retry: false }),
 
   dashboard: () => request('/dashboard'),
 
@@ -120,6 +129,7 @@ export const api = {
   users: () => request('/users'),
   createUser: (body) => request('/users', { method: 'POST', body }),
   updateUser: (id, body) => request(`/users/${id}`, { method: 'PATCH', body }),
+  deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
 
   auditLogs: (params = {}) => request(`/audit-logs?${new URLSearchParams(params)}`),
 

@@ -48,6 +48,7 @@ export const ROLE_PERMISSIONS = {
   ACCOUNTANT: [
     'posts.read','posts.interact','messages.read','messages.send',
     'clients.read', 'cases.read',
+    'users.read',
     'time.read', 'time.update',
     'templates.read',
     'billing.read', 'billing.create', 'billing.update',

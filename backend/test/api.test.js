@@ -1935,3 +1935,216 @@ describe('seed:content — photos des analyses juridiques de l’avocat', () => 
     assert.ok(src.includes('hero-office.jpg') && src.includes('hero-mine.jpg') && src.includes('hero-kinshasa.jpg'));
   });
 });
+
+describe("demandes d'accès — notification admin", () => {
+  test("une demande d'accès crée une notification pour les administrateurs", async () => {
+    const stamp = Date.now();
+    const res = await api('/api/registration-requests', {
+      method: 'POST',
+      body: { email: `demande-${stamp}@test.example`, firstName: 'Jean', lastName: 'Testeur' },
+    });
+    assert.equal(res.status, 201);
+    const { rows } = await query(
+      `SELECT n.id, n.title FROM notifications n JOIN users u ON u.id = n.user_id
+       WHERE n.type = 'REGISTRATION_REQUEST' AND u.email = $1 ORDER BY n.id DESC LIMIT 1`,
+      [ADMIN_EMAIL],
+    );
+    assert.ok(rows[0], 'aucune notification REGISTRATION_REQUEST pour l’admin');
+    assert.ok(rows[0].title.includes('Jean Testeur'));
+  });
+});
+
+describe('comptable — visibilité de l’équipe', () => {
+  test('le comptable liste les utilisateurs (avocats visibles, clients exclus)', async () => {
+    const res = await api('/api/users', { token: accountantToken });
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body));
+    assert.ok(res.body.some((u) => u.role === 'LAWYER'), 'aucun avocat visible');
+    assert.ok(!res.body.some((u) => u.role === 'CLIENT'), 'un compte client est visible !');
+  });
+});
+
+describe('désactivation utilisateur (DELETE /users/:id)', () => {
+  let targetId;
+  let targetEmail;
+
+  test('préparation : crée un avocat à désactiver', async () => {
+    const stamp = Date.now();
+    targetEmail = `desact-${stamp}@test.example`;
+    const res = await api('/api/users', {
+      token: adminToken,
+      method: 'POST',
+      body: { email: targetEmail, password: 'Str0ngPass!', firstName: 'Paul', lastName: 'Cible', role: 'LAWYER' },
+    });
+    assert.equal(res.status, 201);
+    targetId = res.body.id;
+  });
+
+  test('un non-admin ne peut pas désactiver → 403', async () => {
+    const res = await api(`/api/users/${targetId}`, { token: lawyerToken, method: 'DELETE' });
+    assert.equal(res.status, 403);
+  });
+
+  test('impossible de se désactiver soi-même → 400', async () => {
+    const me = await api('/api/auth/me', { token: adminToken });
+    const res = await api(`/api/users/${me.body.id}`, { token: adminToken, method: 'DELETE' });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'cannot_deactivate_self');
+  });
+
+  test('utilisateur avec dossier assigné → 409', async () => {
+    const stamp = Date.now();
+    const cl = await api('/api/clients', {
+      token: adminToken, method: 'POST',
+      body: { firstName: 'Cli', lastName: `Desact${stamp}`, email: `cli-desact-${stamp}@test.example` },
+    });
+    assert.equal(cl.status, 201);
+    const cs = await api('/api/cases', {
+      token: adminToken, method: 'POST', body: { title: 'Dossier test', clientId: cl.body.id },
+    });
+    assert.equal(cs.status, 201);
+    const assign = await api(`/api/cases/${cs.body.id}`, {
+      token: adminToken, method: 'PATCH', body: { lawyerId: targetId },
+    });
+    assert.equal(assign.status, 200);
+    const res = await api(`/api/users/${targetId}`, { token: adminToken, method: 'DELETE' });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error.code, 'has_assigned_cases');
+    // Nettoyage : désassigne le dossier pour la suite (le PATCH COALESCE ignore null).
+    await query('UPDATE cases SET lawyer_id = NULL WHERE id = $1', [cs.body.id]);
+  });
+
+  test('désactivation OK → 204, login ensuite refusé', async () => {
+    const res = await api(`/api/users/${targetId}`, { token: adminToken, method: 'DELETE' });
+    assert.equal(res.status, 204);
+    const loginRes = await api('/api/auth/login', { method: 'POST', body: { email: targetEmail, password: 'Str0ngPass!' } });
+    assert.equal(loginRes.status, 401);
+  });
+
+  test('impossible de désactiver le dernier super-admin → 400', async () => {
+    // Isole le test : désactive les éventuels super-admins résiduels d'un run précédent.
+    await query(`UPDATE users SET is_active = 0 WHERE id IN (
+      SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE r.name = 'SUPER_ADMIN' AND u.is_active = 1)`);
+    const stamp = Date.now();
+    const mk = (email) => api('/api/users', {
+      token: adminToken, method: 'POST',
+      body: { email, password: 'Str0ngPass!', firstName: 'Sup', lastName: 'Er', role: 'SUPER_ADMIN' },
+    });
+    const s1 = await mk(`sup1-${stamp}@test.example`);
+    const s2 = await mk(`sup2-${stamp}@test.example`);
+    assert.equal(s1.status, 201);
+    assert.equal(s2.status, 201);
+    assert.equal((await api(`/api/users/${s1.body.id}`, { token: adminToken, method: 'DELETE' })).status, 204);
+    const res = await api(`/api/users/${s2.body.id}`, { token: adminToken, method: 'DELETE' });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'last_super_admin');
+  });
+});
+
+describe('mot de passe oublié', () => {
+  test('email inconnu → 200 générique (ne révèle rien)', async () => {
+    const res = await api('/api/auth/forgot-password', { method: 'POST', body: { email: 'inconnu-xyz-123@test.example' } });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.message);
+  });
+
+  test('sans SMTP configuré : pas de crash, réponse générique', async () => {
+    const res = await api('/api/auth/forgot-password', { method: 'POST', body: { email: ADMIN_EMAIL } });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.message);
+  });
+
+  test('jeton invalide → 400', async () => {
+    const res = await api('/api/auth/reset-password', { method: 'POST', body: { token: 'jeton-faux', newPassword: 'NewStr0ngPass!' } });
+    assert.equal(res.status, 400);
+    assert.equal(res.body.error.code, 'invalid_token');
+  });
+
+  test('flux complet via jeton inséré en base (sans SMTP)', async () => {
+    const crypto = await import('node:crypto');
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+    const { rows: u } = await query('SELECT id FROM users WHERE email = $1', [ADMIN_EMAIL]);
+    await query('DELETE FROM password_reset_tokens WHERE user_id = $1', [u[0].id]);
+    await query('INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)',
+      [u[0].id, tokenHash, new Date(Date.now() + 3600000)]);
+    const res = await api('/api/auth/reset-password', { method: 'POST', body: { token, newPassword: 'NewStr0ngPass!' } });
+    assert.equal(res.status, 200);
+    // Jeton à usage unique : réutilisation refusée.
+    const reuse = await api('/api/auth/reset-password', { method: 'POST', body: { token, newPassword: 'OtherStr0ng1!' } });
+    assert.equal(reuse.status, 400);
+    // Le nouveau mot de passe fonctionne, l'ancien non.
+    const okLogin = await api('/api/auth/login', { method: 'POST', body: { email: ADMIN_EMAIL, password: 'NewStr0ngPass!' } });
+    assert.ok(okLogin.body.accessToken);
+    const koLogin = await api('/api/auth/login', { method: 'POST', body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } });
+    assert.equal(koLogin.status, 401);
+    // Restaure le mot de passe d'origine pour la suite des tests.
+    await query('UPDATE users SET password_hash = $1 WHERE id = $2', [await bcrypt.hash(ADMIN_PASSWORD, 10), u[0].id]);
+  });
+});
+
+describe('2FA TOTP', () => {
+  test('sans jeton → 401', async () => {
+    assert.equal((await api('/api/auth/2fa/status')).status, 401);
+  });
+
+  test('cycle complet : setup → verify → login 2FA → disable', async () => {
+    const { generate } = await import('otplib');
+    assert.equal((await api('/api/auth/2fa/status', { token: adminToken })).body.enabled, false);
+
+    const setup = await api('/api/auth/2fa/setup', { token: adminToken, method: 'POST' });
+    assert.equal(setup.status, 200);
+    assert.ok(setup.body.secret);
+    assert.ok(setup.body.otpauthUrl.startsWith('otpauth://'));
+    assert.ok(setup.body.qrDataUrl.startsWith('data:image/png'));
+
+    const bad = await api('/api/auth/2fa/verify', { token: adminToken, method: 'POST', body: { code: '000000' } });
+    assert.equal(bad.status, 401);
+
+    const good = await api('/api/auth/2fa/verify', {
+      token: adminToken, method: 'POST', body: { code: await generate({ secret: setup.body.secret }) },
+    });
+    assert.equal(good.status, 200);
+    assert.equal((await api('/api/auth/2fa/status', { token: adminToken })).body.enabled, true);
+
+    // Le login exige désormais la seconde étape.
+    const loginRes = await api('/api/auth/login', { method: 'POST', body: { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } });
+    assert.equal(loginRes.body.twoFactorRequired, true);
+    assert.ok(loginRes.body.tempToken);
+    assert.ok(!loginRes.body.accessToken);
+
+    const badLogin = await api('/api/auth/2fa/login', {
+      method: 'POST', body: { tempToken: loginRes.body.tempToken, code: '000000' },
+    });
+    assert.equal(badLogin.status, 401);
+
+    const okLogin = await api('/api/auth/2fa/login', {
+      method: 'POST',
+      body: { tempToken: loginRes.body.tempToken, code: await generate({ secret: setup.body.secret }) },
+    });
+    assert.ok(okLogin.body.accessToken);
+
+    const badDis = await api('/api/auth/2fa/disable', { token: adminToken, method: 'POST', body: { password: 'faux' } });
+    assert.equal(badDis.status, 401);
+
+    const dis = await api('/api/auth/2fa/disable', { token: adminToken, method: 'POST', body: { password: ADMIN_PASSWORD } });
+    assert.equal(dis.status, 200);
+    assert.equal((await api('/api/auth/2fa/status', { token: adminToken })).body.enabled, false);
+  });
+});
+
+describe('connexion Google (OAuth)', () => {
+  test('non configuré → status false, endpoints 404 gracieux', async () => {
+    const s = await api('/api/auth/oauth/google/status');
+    assert.equal(s.status, 200);
+    assert.equal(s.body.enabled, false);
+    const r = await api('/api/auth/oauth/google');
+    assert.equal(r.status, 404);
+    assert.equal(r.body.error.code, 'oauth_not_configured');
+  });
+
+  test('complete avec un code invalide → 401', async () => {
+    const res = await api('/api/auth/oauth/google/complete', { method: 'POST', body: { code: 'faux' } });
+    assert.equal(res.status, 401);
+  });
+});
