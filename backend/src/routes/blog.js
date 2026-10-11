@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { query } from '../db/pool.js';
 import { requireAuth, requirePermission, HttpError } from '../middleware/auth.js';
 import { logAudit } from '../services/audit.js';
+import { chat, llmStatus } from '../services/llm.js';
 
 const router = Router();
 
@@ -242,6 +243,60 @@ router.post('/images', requireAuth, requirePermission('posts.create'), handleUpl
     if (!req.file) throw new HttpError(400, 'missing_file', 'Aucune image reçue.');
     res.status(201).json({ url: `/uploads/blog-images/${req.file.filename}` });
   } catch (e) { next(e); }
+});
+
+const aiGenerateSchema = z.object({
+  topic: z.string().trim().min(3).max(500),
+  lang: z.enum(['fr', 'en']).optional().default('fr'),
+  tone: z.string().trim().max(120).optional().nullable(),
+  length: z.enum(['court', 'moyen', 'long']).optional().default('moyen'),
+});
+
+function aiBlogPrompt(topic, lang, tone, length) {
+  const langName = lang === 'en' ? 'anglais' : 'français';
+  const sizeHint = { court: 'environ 250 mots', moyen: 'environ 500 mots', long: 'environ 900 mots' }[length];
+  const toneHint = tone ? ` Ton souhaité : ${tone}.` : '';
+  return lang === 'en'
+    ? `You are a legal blog writer for "Cabinet Élite Juridique", a law firm in Montréal, Canada. Write a blog article in English about: "${topic}".${toneHint} Target length: ${sizeHint === 'environ 250 mots' ? 'about 250 words' : sizeHint === 'environ 500 mots' ? 'about 500 words' : 'about 900 words'}.`
+      + `\nStructure the body with <h2>/<h3> headings, <p> paragraphs, and <ul>/<li> lists where useful. Allowed tags only: p, h2, h3, h4, strong, em, ul, ol, li, blockquote, a, br. No <h1> (the title is separate), no images, no scripts.`
+      + `\nBe accurate and prudent: no invented facts, names, dates or articles of law; no definitive legal conclusion — the reader should consult a lawyer for their situation.`
+      + `\nReply with ONLY a JSON object, no markdown fences, no commentary: {"title": "article title (max 150 chars)", "html": "article body HTML"}.`
+    : `Tu es un rédacteur d’articles de blog pour le « Cabinet Élite Juridique », un cabinet d’avocats à Montréal, Canada. Rédige un article de blog en ${langName} sur le sujet : « ${topic} ».${toneHint} Longueur visée : ${sizeHint}.`
+      + `\nStructure le corps avec des titres <h2>/<h3>, des paragraphes <p> et des listes <ul>/<li> quand c’est utile. Balises autorisées uniquement : p, h2, h3, h4, strong, em, ul, ol, li, blockquote, a, br. Pas de <h1> (le titre est séparé), pas d’images, pas de scripts.`
+      + `\nSois précis et prudent : n’invente aucun fait, nom, date ou article de loi ; aucune conclusion juridique définitive — le lecteur doit consulter un avocat pour sa situation.`
+      + `\nRéponds UNIQUEMENT avec un objet JSON, sans bloc markdown, sans commentaire : {"title": "titre de l’article (150 caractères max)", "html": "corps de l’article en HTML"}.`;
+}
+
+/**
+ * POST /api/blog/ai-generate — génère un titre + un corps d'article avec l'IA.
+ * L'article n'est JAMAIS publié automatiquement : l'éditeur remplit les champs
+ * pour relecture/modification, et la sauvegarde applique sanitizeHtml.
+ */
+router.post('/ai-generate', requireAuth, requirePermission('posts.create'), async (req, res, next) => {
+  try {
+    const b = aiGenerateSchema.parse(req.body);
+    if (!llmStatus().available) {
+      throw new HttpError(503, 'llm_unavailable', 'L’assistant IA n’est pas configuré (LLM_API_KEY manquante).');
+    }
+    const raw = await chat(
+      [{ role: 'system', content: aiBlogPrompt(b.topic, b.lang, b.tone ?? null, b.length) }],
+      { maxTokens: 3000, temperature: 0.7 },
+    );
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+    let parsed;
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch {
+      throw new HttpError(502, 'llm_bad_response', 'L’IA n’a pas retourné un article exploitable. Réessayez.');
+    }
+    const title = String(parsed?.title ?? '').trim().slice(0, 180);
+    const html = String(parsed?.html ?? '').trim();
+    if (!title || !html) throw new HttpError(502, 'llm_bad_response', 'L’IA n’a pas retourné un article exploitable. Réessayez.');
+    await logAudit({ userId: req.user.id, action: 'BLOG_AI_GENERATED', resourceType: 'blog_post', resourceId: null, newValues: { topic: b.topic, lang: b.lang }, ip: req.ip });
+    res.json({ title, contentHtml: html });
+  } catch (e) {
+    next(e instanceof z.ZodError ? new HttpError(400, 'invalid_body', e.issues[0].message) : e);
+  }
 });
 
 router.put('/:id', requireAuth, requirePermission('posts.create'), handleUpload(coverUpload, 'cover'), async (req, res, next) => {

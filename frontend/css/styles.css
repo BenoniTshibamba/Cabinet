@@ -1615,3 +1615,11 @@ tbody tr:hover { background: var(--accent-tint); }
   .rte-toolbar { gap: 2px; padding: 6px; }
   .rte-select { max-width: 104px; }
 }
+
+/* v5 — aperçu du temps non facturé dans le formulaire de facture */
+.invoice-preview { background: var(--surface); border: 1px solid var(--rule); border-radius: 0.6rem; padding: 0.9rem 1rem; margin-bottom: 1rem; }
+.invoice-preview h4 { margin: 0 0 0.5rem; font-size: 0.9rem; }
+.invoice-preview-lines { list-style: none; margin: 0 0 0.6rem; padding: 0; }
+.invoice-preview-lines li { display: flex; justify-content: space-between; gap: 1rem; padding: 0.3rem 0; border-bottom: 1px dashed var(--rule); font-size: 0.88rem; }
+.invoice-preview-lines li:last-child { border-bottom: none; }
+.invoice-preview-total { display: flex; justify-content: space-between; font-weight: 600; margin: 0; padding-top: 0.4rem; border-top: 1px solid var(--rule); }

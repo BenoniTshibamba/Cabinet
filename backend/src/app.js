@@ -23,6 +23,7 @@ import settingsRoutes, { BRANDING_DIR } from './routes/settings.js';
 import blogRoutes, { BLOG_COVERS_DIR } from './routes/blog.js';
 import practiceAreaRoutes from './routes/practice-areas.js';
 import contactRoutes from './routes/contact.js';
+import publicChatRoutes from './routes/public-chat.js';
 import testimonialRoutes, { TESTIMONIALS_DIR } from './routes/testimonials.js';
 import siteStatRoutes from './routes/site-stats.js';
 import { mountBlogPages } from './blog-ssr.js';
@@ -76,6 +77,7 @@ export function createApp() {
   api.use('/blog', blogRoutes);
   api.use('/practice-areas', practiceAreaRoutes);
   api.use('/contact', contactRoutes);
+  api.use('/public/chat', publicChatRoutes);
   api.use('/testimonials', testimonialRoutes);
   api.use('/site-stats', siteStatRoutes);
   // Monté en dernier et sans préfixe (il expose /cases/:id/documents et /documents/:id/*) :

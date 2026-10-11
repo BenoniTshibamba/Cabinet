@@ -202,6 +202,15 @@ const api = {
   login: (email, password) => request('/auth/login', { method: 'POST', body: { email, password }, retry: false }),
   me: () => request('/auth/me'),
   changePassword: (currentPassword, newPassword) => request('/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } }),
+  forgotPassword: (email) => request('/auth/forgot-password', { method: 'POST', body: { email }, retry: false }),
+  resetPassword: (token, newPassword) => request('/auth/reset-password', { method: 'POST', body: { token, newPassword }, retry: false }),
+  twofaStatus: () => request('/auth/2fa/status'),
+  twofaSetup: () => request('/auth/2fa/setup', { method: 'POST' }),
+  twofaVerify: (code) => request('/auth/2fa/verify', { method: 'POST', body: { code } }),
+  twofaDisable: (password) => request('/auth/2fa/disable', { method: 'POST', body: { password } }),
+  twofaLogin: (tempToken, code) => request('/auth/2fa/login', { method: 'POST', body: { tempToken, code }, retry: false }),
+  oauthGoogleStatus: () => request('/auth/oauth/google/status', { retry: false }),
+  oauthGoogleComplete: (code) => request('/auth/oauth/google/complete', { method: 'POST', body: { code }, retry: false }),
 
   dashboard: () => request('/dashboard'),
 
@@ -217,6 +226,10 @@ const api = {
   updateCase: (id, body) => request(`/cases/${id}`, { method: 'PATCH', body }),
   caseNotes: (id) => request(`/cases/${id}/notes`),
   addCaseNote: (id, content) => request(`/cases/${id}/notes`, { method: 'POST', body: { content } }),
+  caseShares: (caseId) => request(`/cases/${caseId}/shares`),
+  shareCase: (caseId, lawyerId) => request(`/cases/${caseId}/shares`, { method: 'POST', body: { lawyerId } }),
+  unshareCase: (caseId, lawyerId) => request(`/cases/${caseId}/shares/${lawyerId}`, { method: 'DELETE' }),
+  lawyers: () => request('/users'),
 
   documents: (caseId) => request(`/cases/${caseId}/documents`),
   uploadDocument: (caseId, file) => {
@@ -228,6 +241,8 @@ const api = {
 
   invoices: (params = {}) => request(`/invoices?${new URLSearchParams(params)}`),
   createInvoice: (body) => request('/invoices', { method: 'POST', body }),
+  invoicePreview: (caseId) => request(`/invoices/preview?case_id=${encodeURIComponent(caseId)}`),
+  caseBillable: (caseId) => request(`/invoices/billable?case_id=${encodeURIComponent(caseId)}`),
   setInvoiceStatus: (id, status) => request(`/invoices/${id}/status`, { method: 'PATCH', body: { status } }),
 
   notifications: () => request('/notifications'),
@@ -238,6 +253,13 @@ const api = {
   users: () => request('/users'),
   createUser: (body) => request('/users', { method: 'POST', body }),
   updateUser: (id, body) => request(`/users/${id}`, { method: 'PATCH', body }),
+  deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
+  uploadAvatar: (file) => {
+    const form = new FormData();
+    form.append('avatar', file);
+    return request('/users/me/avatar', { method: 'POST', body: form, isForm: true });
+  },
+  removeAvatar: () => request('/users/me/avatar', { method: 'DELETE' }),
 
   auditLogs: (params = {}) => request(`/audit-logs?${new URLSearchParams(params)}`),
 
@@ -271,6 +293,8 @@ const api = {
   updatePracticeArea: (id, body) => request(`/practice-areas/${id}`, { method: 'PUT', body }),
   deletePracticeArea: (id) => request(`/practice-areas/${id}`, { method: 'DELETE' }),
   sendContact: (body) => request('/contact', { method: 'POST', body }),
+  contactMessages: () => request('/contact'),
+  markContactRead: (id, isRead) => request(`/contact/${id}`, { method: 'PATCH', body: { isRead } }),
   testimonials: () => request('/testimonials'),
   createTestimonial: (body, photoFile) => {
     if (!photoFile) return request('/testimonials', { method: 'POST', body });
@@ -332,7 +356,7 @@ const api = {
   messageUsers: () => request('/social/messages/users'),
   messages: (userId) => request(`/social/messages/${userId}`),
   sendMessage: (recipientId, content, attachmentDocumentId) => request('/social/messages', { method: 'POST', body: { recipientId, content, ...(attachmentDocumentId ? { attachmentDocumentId } : {}) } }),
-  unreadCount: () => request('/social/messages/unread-count'),
+  msgUnreadCount: () => request('/social/messages/unread-count'),
   msgSearch: (q) => request(`/social/messages/search?q=${encodeURIComponent(q)}`),
   sendTyping: (userId) => request(`/social/messages/typing/${userId}`, { method: 'POST' }).catch(() => null),
   getTyping: (userId) => request(`/social/messages/typing/${userId}`).catch(() => ({ typing: false })),
@@ -349,8 +373,11 @@ const api = {
   convGetTyping: (id) => request(`/social/conversations/${id}/typing`).catch(() => ({ typing: [] })),
   aiStatus: () => request('/ai/status'),
   askAI: (question, caseId, lang) => request('/ai/ask', { method: 'POST', body: { question, ...(caseId ? { caseId } : {}), ...(lang ? { lang } : {}) } }),
+  publicChat: (question, lang) => request('/public/chat', { method: 'POST', body: { question, lang } }),
   indexDocument: (id) => request(`/ai/index-document/${id}`, { method: 'POST' }),
   registerRequest: (body) => request('/registration-requests', { method: 'POST', body }),
+  registrationRequests: () => request('/registration-requests'),
+  reviewRegistrationRequest: (id, body) => request(`/registration-requests/${id}`, { method: 'PATCH', body }),
   siteSettings: () => request('/site-settings'),
   updateSiteSettings: (body) => request('/site-settings', { method: 'PUT', body }),
   uploadLogo: (file) => {
@@ -377,6 +404,7 @@ const api = {
     return request(`/blog/${id}`, { method: 'PUT', body: form, isForm: true });
   },
   deleteBlogPost: (id) => request(`/blog/${id}`, { method: 'DELETE' }),
+  generateBlogPost: (body) => request('/blog/ai-generate', { method: 'POST', body }),
   uploadBlogImage: (file) => {
     const form = new FormData();
     form.append('image', file);
@@ -701,6 +729,7 @@ async function route() {
     audit: () => viewAudit(main),
     customize: () => viewCustomize(main),
     'contact-messages': () => viewContactMessages(main),
+    'access-requests': () => viewAccessRequests(main),
   };
   (views[name] ?? views.dashboard)();
   highlightNav(name);
@@ -1466,6 +1495,7 @@ const NAV = [
   { key: 'ai', label: t('navAI'), icon: 'search', perm: 'ai.ask', hideFor: ['CLIENT'] },
   { key: 'messages', label: t('navMessages'), icon: 'messages', perm: 'messages.read' },
   { key: 'contact-messages', label: t('navContactMessages'), icon: 'bell', perm: 'contact.read' },
+  { key: 'access-requests', label: t('navAccessRequests'), icon: 'lock', perm: 'users.read' },
   { key: 'dashboard', label: t('navDashboard'), icon: 'dashboard', perm: 'dashboard.read' },
   { key: 'clients', label: t('navClients'), icon: 'clients', perm: 'clients.read' },
   { key: 'cases', label: t('navCases'), icon: 'cases', perm: 'cases.read', clientLabel: t('navMyCases') },
@@ -1625,6 +1655,14 @@ async function refreshUnreadBadge() {
   }
 }
 
+/** Destination d'une notification selon son type : la page utile plutôt que le tableau de bord. */
+function notifHref(n) {
+  if (n.type === 'REGISTRATION_REQUEST') return '#/access-requests';
+  if (n.type === 'CONTACT_MESSAGE') return '#/contact-messages';
+  if (n.caseId) return `#/cases/${n.caseId}`;
+  return '#/dashboard';
+}
+
 async function toggleNotifPanel() {
   const panel = document.getElementById('notif-panel');
   panel.hidden = !panel.hidden;
@@ -1648,7 +1686,7 @@ async function toggleNotifPanel() {
         'a',
         {
           class: `notif-item${n.isRead ? '' : ' unread'}`,
-          href: n.caseId ? `#/cases/${n.caseId}` : '#/dashboard',
+          href: notifHref(n),
           onclick: async () => { if (!n.isRead) { await guarded(() => api.markNotificationRead(n.id)); refreshUnreadBadge(); } panel.hidden = true; },
         },
         h('span', { class: 'notif-title' }, n.title),
@@ -2299,7 +2337,7 @@ async function refreshMsgNavBadge() {
   if (!badge) return;
   if (!currentUser || !new Set(currentUser.permissions ?? []).has('messages.read')) { badge.hidden = true; return; }
   try {
-    const { total } = await api.unreadCount();
+    const { total } = await api.msgUnreadCount();
     badge.hidden = !total;
     badge.textContent = total > 9 ? '9+' : String(total);
   } catch { /* silencieux */ }
@@ -2449,7 +2487,7 @@ async function viewMessages(main) {
   let lastUnreadJson = '';
   const refreshBadges = async (force = false) => {
     try {
-      const { total, byUser } = await api.unreadCount();
+      const { total, byUser } = await api.msgUnreadCount();
       const j = JSON.stringify(byUser || {});
       if (force || j !== lastUnreadJson) { lastUnreadJson = j; renderLists(byUser || {}); }
       const badge = document.getElementById('nav-msg-badge');
@@ -2718,9 +2756,13 @@ let chatBootedFor = null;
 
 function syncChatWidget() {
   const existing = document.getElementById('cej-chat');
-  const canChat = !!(currentUser && new Set(currentUser.permissions ?? []).has('ai.ask'));
-  if (!canChat) { existing?.remove(); chatBootedFor = null; return; }
-  if (!existing) mountChatWidget();
+  const staffChat = !!(currentUser && new Set(currentUser.permissions ?? []).has('ai.ask'));
+  // Bulle visible pour le personnel autorisé (mode privé) ET pour les visiteurs
+  // publics non connectés (mode public, assistant d'accueil).
+  const mode = staffChat ? 'staff' : (!currentUser ? 'public' : null);
+  if (!mode) { existing?.remove(); chatBootedFor = null; return; }
+  if (!existing) mountChatWidget(mode);
+  else if (existing.dataset.mode !== mode) { existing.remove(); chatBootedFor = null; mountChatWidget(mode); }
 }
 
 function chatIconSvg() {
@@ -2733,9 +2775,10 @@ function chatIconSvg() {
   return svg;
 }
 
-function mountChatWidget() {
+function mountChatWidget(mode = 'staff') {
+  const isPublic = mode === 'public';
   const msgs = h('div', { class: 'cej-chat-msgs', role: 'log', 'aria-live': 'polite' });
-  const input = h('input', { type: 'text', class: 'cej-chat-input', placeholder: t('chatPlaceholder'), 'aria-label': t('chatTitle'), maxlength: 5000 });
+  const input = h('input', { type: 'text', class: 'cej-chat-input', placeholder: t(isPublic ? 'chatPublicPlaceholder' : 'chatPlaceholder'), 'aria-label': t('chatTitle'), maxlength: 5000 });
   const sendBtn = h('button', { class: 'cej-chat-send', type: 'button' }, t('chatSend'));
   const panel = h('div', { class: 'cej-chat-panel', hidden: true },
     h('div', { class: 'cej-chat-head' },
@@ -2745,7 +2788,7 @@ function mountChatWidget() {
     h('div', { class: 'cej-chat-form' }, input, sendBtn));
   const bubble = h('button', { class: 'cej-chat-bubble', type: 'button', 'aria-label': t('chatTitle'), 'aria-expanded': 'false', onclick: () => toggleChat() });
   bubble.append(chatIconSvg());
-  const root = h('div', { id: 'cej-chat', class: 'cej-chat' }, panel, bubble);
+  const root = h('div', { id: 'cej-chat', class: 'cej-chat', 'data-mode': mode }, panel, bubble);
   document.body.append(root);
 
   let sending = false;
@@ -2759,10 +2802,12 @@ function mountChatWidget() {
     msgs.append(typing);
     msgs.scrollTop = msgs.scrollHeight;
     try {
-      const r = await api.askAI(q, undefined, getLang());
+      const r = isPublic
+        ? await api.publicChat(q, getLang())
+        : await api.askAI(q, undefined, getLang());
       typing.remove();
       msgs.append(h('div', { class: 'cej-chat-msg assistant' }, h('p', null, r.answer)));
-      if ((r.sources || []).length) {
+      if (!isPublic && (r.sources || []).length) {
         msgs.append(h('div', { class: 'cej-chat-sources' },
           h('span', { class: 'cej-chat-sources-label' }, `${t('chatSources')} :`),
           ...(r.sources || []).map((s) => h('span', { class: 'cej-chat-chip' }, `[${s.number}] ${s.name}`))));
@@ -2784,6 +2829,12 @@ function mountChatWidget() {
     if (open && chatBootedFor !== getLang()) {
       chatBootedFor = getLang();
       clear(msgs);
+      if (isPublic) {
+        // Visiteurs publics : pas de vérification de statut (endpoint sans auth).
+        input.disabled = false;
+        sendBtn.disabled = false;
+        msgs.append(h('div', { class: 'cej-chat-msg assistant' }, h('p', null, t('chatPublicWelcome'))));
+      } else {
       try {
         const status = await api.aiStatus();
         if (!status.configured) {
@@ -2797,6 +2848,7 @@ function mountChatWidget() {
         }
       } catch (err) {
         msgs.append(h('div', { class: 'cej-chat-msg assistant error' }, h('p', null, errorMessage(err))));
+      }
       }
     }
     if (open) setTimeout(() => input.focus(), 60);
@@ -3534,6 +3586,7 @@ async function viewCaseDetail(main, id) {
     ['overview', t('tabOverview'), () => renderOverview()],
     perms.has('documents.read') && ['documents', t('tabDocuments'), () => renderDocuments()],
     ['notes', t('tabNotes'), () => renderNotes()],
+    currentUser.role === 'CLIENT' && ['billable', t('tabBillable'), () => renderBillable()],
   ].filter(Boolean);
 
   function setTab(key) {
@@ -3647,6 +3700,34 @@ async function viewCaseDetail(main, id) {
     } else {
       panel.append(list);
     }
+  }
+
+  async function renderBillable() {
+    // Temps facturable du dossier, calculé en direct à chaque ouverture.
+    panel.append(h('p', { class: 'loading' }, t('loading')));
+    const data = await guarded(() => api.caseBillable(id));
+    clear(panel);
+    if (!data) return;
+    const card = (label, hours, cents) =>
+      h('div', { class: 'kpi' }, h('div', { class: 'kpi-text' }, h('div', { class: 'kpi-value' }, `${hours} h`), h('div', { class: 'kpi-label' }, `${label} · ${fmtMoney(cents)}`)));
+    panel.append(
+      h('div', { class: 'kpi-grid' },
+        card(t('billTotal'), data.totalHours, data.totalCents),
+        card(t('billBilled'), data.billedHours, data.billedCents),
+        card(t('billUnbilled'), data.unbilledHours, data.unbilledCents)),
+      h('p', { class: 'muted' }, t('billLiveHint')),
+      data.lines?.length
+        ? h('div', { class: 'table-wrap' }, h('table', null,
+            h('thead', null, h('tr', null, h('th', null, t('billDate')), h('th', null, t('billDesc')), h('th', { class: 'num' }, t('billHours')), h('th', { class: 'num' }, t('billAmount')), h('th', null, t('billStatus')))),
+            h('tbody', null, ...data.lines.map((l) =>
+              h('tr', null,
+                h('td', null, fmtDate(l.date)),
+                h('td', null, l.description || '—'),
+                h('td', { class: 'num' }, String(l.hours)),
+                h('td', { class: 'num' }, fmtMoney(l.amountCents)),
+                h('td', null, h('span', { class: `badge ${l.invoiceId ? 'badge-success' : ''}` }, l.invoiceId ? t('billBilledTag') : t('billUnbilledTag'))))))))
+        : h('p', { class: 'empty-state' }, t('billEmpty')),
+    );
   }
 
   const statusSelect = perms.has('cases.update')
@@ -4461,6 +4542,27 @@ async function viewInvoices(main) {
           dueAt: h('input', { type: 'date' }),
         };
         const errorBox = h('p', { class: 'form-error', hidden: true });
+        const previewBox = h('div', { class: 'invoice-preview', hidden: true });
+        async function refreshPreview() {
+          clear(previewBox);
+          previewBox.hidden = true;
+          f.amount.readOnly = false;
+          if (!f.caseId.value) return;
+          const pv = await api.invoicePreview(f.caseId.value).catch(() => null);
+          if (!pv || !pv.lines?.length) return;
+          previewBox.hidden = false;
+          previewBox.append(
+            h('h4', null, t('invTimePreview', { n: pv.count })),
+            h('ul', { class: 'invoice-preview-lines' }, ...pv.lines.map((l) =>
+              h('li', null,
+                h('span', null, `${fmtDate(l.date)} · ${l.hours} h × ${fmtMoney(Math.round(l.rate * 100))}`),
+                h('strong', null, fmtMoney(l.amountCents))))),
+            h('p', { class: 'invoice-preview-total' }, h('span', null, t('invTimeTotal')), h('strong', null, fmtMoney(pv.totalCents))),
+          );
+          f.amount.value = (pv.totalCents / 100).toFixed(2);
+          f.amount.readOnly = true;
+        }
+        f.caseId.addEventListener('change', () => { refreshPreview(); });
         const form = h(
           'form', { class: 'stacked-form', onsubmit: async (e) => {
             e.preventDefault();
@@ -4482,6 +4584,7 @@ async function viewInvoices(main) {
             }
           } },
           field(t('invClient'), f.clientId), field(t('invCaseOpt'), f.caseId),
+          previewBox,
           h('div', { class: 'form-row' }, field(t('invAmount'), f.amount), field(t('invTax'), f.tax)),
           field(t('invDueDate'), f.dueAt),
           errorBox,
@@ -4663,6 +4766,85 @@ async function viewContactMessages(main) {
     );
     list.append(card);
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Demandes d'accès (admin)                                            */
+/* ------------------------------------------------------------------ */
+
+async function viewAccessRequests(main) {
+  const list = h('div', { class: 'stack' });
+
+  async function load() {
+    const rows = await guarded(() => api.registrationRequests());
+    clear(list);
+    const pending = (rows ?? []).filter((r) => r.status === 'PENDING');
+    if (!pending.length) {
+      list.append(h('p', { class: 'empty-state' }, t('accessReqEmpty')));
+      return;
+    }
+    for (const r of pending) {
+      const name = `${r.first_name} ${r.last_name}`;
+      const roleSelect = h(
+        'select',
+        { class: 'status-select', 'aria-label': t('accessReqRole') },
+        ...['ADMIN', 'LAWYER', 'ASSISTANT', 'ACCOUNTANT'].map((role) =>
+          h('option', { value: role, ...(role === 'LAWYER' ? { selected: true } : {}) }, ROLE_LABEL()[role] ?? role),
+        ),
+      );
+      const approveBtn = h('button', { class: 'btn btn-small btn-primary', type: 'button' }, t('accessReqApprove'));
+      approveBtn.onclick = async () => {
+        if (!confirm(t('accessReqConfirmApprove', { name }))) return;
+        approveBtn.disabled = true;
+        try {
+          const res = await guarded(() => api.reviewRegistrationRequest(r.id, { status: 'APPROVED', role: roleSelect.value }));
+          if (res?.user) {
+            toast(`${t('accessReqApproved')} ${res.emailed ? t('accessReqEmailed') : t('accessReqTempPassword', { password: res.tempPassword })}`);
+            load();
+          }
+        } finally {
+          approveBtn.disabled = false;
+        }
+      };
+      const rejectBtn = h('button', { class: 'btn btn-small btn-secondary', type: 'button' }, t('accessReqReject'));
+      rejectBtn.onclick = async () => {
+        if (!confirm(t('accessReqConfirmReject', { name }))) return;
+        const res = await guarded(() => api.reviewRegistrationRequest(r.id, { status: 'REJECTED' }));
+        if (res) { toast(t('accessReqRejected')); load(); }
+      };
+      list.append(
+        h(
+          'article',
+          { class: 'panel contact-msg unread' },
+          h(
+            'div',
+            { class: 'contact-msg-head' },
+            h('div', null, h('strong', null, name), h('span', { class: 'muted' }, ` · ${r.email}`)),
+            h('span', { class: 'muted' }, fmtDate(r.created_at)),
+          ),
+          r.message ? h('p', null, h('strong', null, `${t('accessReqMessage')} : `), r.message) : null,
+          h(
+            'div',
+            { class: 'contact-msg-actions' },
+            h('label', { class: 'muted' }, `${t('accessReqRole')} `, roleSelect),
+            approveBtn,
+            rejectBtn,
+          ),
+        ),
+      );
+    }
+  }
+
+  clear(main).append(
+    h(
+      'div',
+      { class: 'page' },
+      h('div', { class: 'page-head' }, h('h1', { tabindex: '-1' }, t('accessReqTitle')), h('p', { class: 'muted' }, t('accessReqSubtitle'))),
+      list,
+    ),
+  );
+  await load();
+  main.focus({ preventScroll: true });
 }
 
 /* ------------------------------------------------------------------ */
@@ -5465,7 +5647,7 @@ function buildRichEditor(initialHtml) {
   );
 
   wrap.append(toolbar, area, imgBar, imgFileInput);
-  return { wrap, getHtml: () => { normalizeRte(area); hideImgBar(); return area.innerHTML; } };
+  return { wrap, getHtml: () => { normalizeRte(area); hideImgBar(); return area.innerHTML; }, setHtml: (html) => { area.innerHTML = html || ''; } };
 }
 
 function openBlogEditor(existing = null, refresh) {
@@ -5497,6 +5679,39 @@ function openBlogEditor(existing = null, refresh) {
       refresh();
     } catch (err) { errorBox.textContent = errorMessage(err); errorBox.hidden = false; }
   };
+  const aiModal = () => {
+    const topic = h('input', { required: true, maxlength: 500, placeholder: t('blogAiTopicPh') });
+    const tone = h('input', { maxlength: 120, placeholder: t('blogAiTonePh') });
+    const length = h('select', null,
+      h('option', { value: 'court' }, t('blogAiLenShort')),
+      h('option', { value: 'moyen', selected: true }, t('blogAiLenMedium')),
+      h('option', { value: 'long' }, t('blogAiLenLong')));
+    const aiError = h('p', { class: 'form-error', hidden: true });
+    const genBtn = h('button', { class: 'btn btn-primary', type: 'submit' }, t('blogAiGenerate'));
+    const aiForm = h('form', { class: 'stacked-form', onsubmit: async (e) => {
+      e.preventDefault();
+      aiError.hidden = true;
+      genBtn.disabled = true;
+      genBtn.textContent = t('blogAiWorking');
+      try {
+        const r = await api.generateBlogPost({ topic: topic.value.trim(), lang: getLang(), tone: tone.value.trim() || undefined, length: length.value });
+        f.title.value = r.title || '';
+        editor.setHtml(r.contentHtml || '');
+        aiClose();
+        toast(t('blogAiDone'));
+      } catch (err) {
+        aiError.textContent = errorMessage(err);
+        aiError.hidden = false;
+      }
+      genBtn.disabled = false;
+      genBtn.textContent = t('blogAiGenerate');
+    } },
+      field(t('blogAiTopic'), topic),
+      field(t('blogAiTone'), tone),
+      field(t('blogAiLength'), length),
+      aiError, genBtn);
+    const aiClose = openModal(t('blogAiTitle'), aiForm);
+  };
   const form = h('form', { class: 'stacked-form', onsubmit: (e) => { e.preventDefault(); save(existing?.status === 'published' ? 'published' : 'draft'); } },
     field(t('blogTitle'), f.title),
     field(t('blogExcerpt'), f.excerpt),
@@ -5504,6 +5719,7 @@ function openBlogEditor(existing = null, refresh) {
     field(t('blogCover'), coverInput), coverPreview,
     errorBox,
     h('div', { class: 'form-row' },
+      h('button', { class: 'btn btn-secondary', type: 'button', onclick: aiModal }, t('blogAiButton')),
       h('button', { class: 'btn btn-secondary', type: 'submit' }, t('blogSaveDraft')),
       h('button', { class: 'btn btn-primary', type: 'button', onclick: () => save('published') }, t('blogPublish'))));
   const close = openModal(existing ? t('blogEdit') : t('blogNew'), form, { wide: true });

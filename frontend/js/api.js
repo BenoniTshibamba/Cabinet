@@ -119,6 +119,8 @@ export const api = {
 
   invoices: (params = {}) => request(`/invoices?${new URLSearchParams(params)}`),
   createInvoice: (body) => request('/invoices', { method: 'POST', body }),
+  invoicePreview: (caseId) => request(`/invoices/preview?case_id=${encodeURIComponent(caseId)}`),
+  caseBillable: (caseId) => request(`/invoices/billable?case_id=${encodeURIComponent(caseId)}`),
   setInvoiceStatus: (id, status) => request(`/invoices/${id}/status`, { method: 'PATCH', body: { status } }),
 
   notifications: () => request('/notifications'),
@@ -165,8 +167,12 @@ export const api = {
   sendMessage: (recipientId, content) => request('/social/messages', { method: 'POST', body: { recipientId, content } }),
   aiStatus: () => request('/ai/status'),
   askAI: (question, caseId) => request('/ai/ask', { method: 'POST', body: { question, ...(caseId ? { caseId } : {}) } }),
+  publicChat: (question, lang) => request('/public/chat', { method: 'POST', body: { question, lang } }),
+  generateBlogPost: (body) => request('/blog/ai-generate', { method: 'POST', body }),
   indexDocument: (id) => request(`/ai/index-document/${id}`, { method: 'POST' }),
   registerRequest: (body) => request('/registration-requests', { method: 'POST', body }),
+  registrationRequests: () => request('/registration-requests'),
+  reviewRegistrationRequest: (id, body) => request(`/registration-requests/${id}`, { method: 'PATCH', body }),
 
   // Formulaire de contact public.
   sendContact: (body) => request('/contact', { method: 'POST', body }),

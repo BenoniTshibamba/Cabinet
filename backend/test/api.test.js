@@ -1755,6 +1755,45 @@ describe('frontend : vérifications statiques (crédit BB24, entête, route publ
     assert.ok(appJs.includes("id: 'publications'"));
     assert.ok(appJs.includes('function refreshPublications()'));
   });
+
+  test("toutes les méthodes api.X() appelées dans le bundle sont définies dans l'objet api", async () => {
+    // Appels `api.methode(` dans tout le bundle.
+    const calls = new Set();
+    for (const m of appJs.matchAll(/\bapi\.([A-Za-z_$][\w$]*)\s*\(/g)) calls.add(m[1]);
+    assert.ok(calls.size > 50, 'aucun appel api détecté : le motif de recherche est probablement cassé');
+
+    // Localisation de l'objet `const api = { ... }` par comptage d'accolades,
+    // en ignorant le contenu des chaînes et des commentaires.
+    const kwIdx = appJs.indexOf('const api = {');
+    assert.ok(kwIdx >= 0, 'objet `const api` introuvable dans app.js');
+    let depth = 0, end = -1;
+    let sQ = false, dQ = false, bt = false, lc = false, bc = false, esc = false;
+    for (let i = appJs.indexOf('{', kwIdx); i < appJs.length; i++) {
+      const c = appJs[i], n = appJs[i + 1];
+      if (esc) { esc = false; continue; }
+      if (lc) { if (c === '\n') lc = false; continue; }
+      if (bc) { if (c === '*' && n === '/') { bc = false; i++; } continue; }
+      if (sQ) { if (c === '\\') esc = true; else if (c === "'") sQ = false; continue; }
+      if (dQ) { if (c === '\\') esc = true; else if (c === '"') dQ = false; continue; }
+      if (bt) { if (c === '\\') esc = true; else if (c === '`') bt = false; continue; }
+      if (c === '/' && n === '/') { lc = true; i++; continue; }
+      if (c === '/' && n === '*') { bc = true; i++; continue; }
+      if (c === "'") { sQ = true; continue; }
+      if (c === '"') { dQ = true; continue; }
+      if (c === '`') { bt = true; continue; }
+      if (c === '{') depth++;
+      else if (c === '}') { depth--; if (depth === 0) { end = i; break; } }
+    }
+    assert.ok(end > kwIdx, "fin de l'objet api introuvable (accolades déséquilibrées ?)");
+    const apiSrc = appJs.slice(kwIdx, end + 1);
+
+    // Les méthodes de l'objet api sont déclarées avec 2 espaces d'indentation.
+    const defined = new Set();
+    for (const m of apiSrc.matchAll(/^  ([A-Za-z_$][\w$]*)\s*:/gm)) defined.add(m[1]);
+
+    const missing = [...calls].filter((x) => !defined.has(x));
+    assert.deepEqual(missing, [], `méthodes api appelées mais non définies dans le bundle : ${missing.join(', ')}`);
+  });
 });
 
 describe('diaporama d’accueil (hero images)', () => {
@@ -1954,6 +1993,76 @@ describe("demandes d'accès — notification admin", () => {
   });
 });
 
+describe("demandes d'accès — approbation / rejet (PATCH /registration-requests/:id)", () => {
+  let pendingId;
+  let pendingEmail;
+
+  test('préparation : crée une demande en attente', async () => {
+    const stamp = Date.now();
+    pendingEmail = `approb-${stamp}@test.example`;
+    const res = await api('/api/registration-requests', {
+      method: 'POST',
+      body: { email: pendingEmail, firstName: 'Aline', lastName: 'Approb' },
+    });
+    assert.equal(res.status, 201);
+    pendingId = res.body.id;
+  });
+
+  test('sans token → 401 ; non-admin (avocat) → 403', async () => {
+    assert.equal((await api(`/api/registration-requests/${pendingId}`, { method: 'PATCH', body: { status: 'APPROVED' } })).status, 401);
+    const res = await api(`/api/registration-requests/${pendingId}`, { token: lawyerToken, method: 'PATCH', body: { status: 'APPROVED' } });
+    assert.equal(res.status, 403);
+  });
+
+  test('statut invalide → 400 ; demande inexistante → 404 ; rôle invalide → 400', async () => {
+    const bad = await api(`/api/registration-requests/${pendingId}`, { token: adminToken, method: 'PATCH', body: { status: 'MAYBE' } });
+    assert.equal(bad.status, 400);
+    const nf = await api('/api/registration-requests/999999', { token: adminToken, method: 'PATCH', body: { status: 'APPROVED' } });
+    assert.equal(nf.status, 404);
+    const role = await api(`/api/registration-requests/${pendingId}`, { token: adminToken, method: 'PATCH', body: { status: 'APPROVED', role: 'SUPERUSER' } });
+    assert.equal(role.status, 400);
+  });
+
+  test("l'approbation crée le compte et marque la demande APPROVED", async () => {
+    const res = await api(`/api/registration-requests/${pendingId}`, {
+      token: adminToken, method: 'PATCH', body: { status: 'APPROVED', role: 'ASSISTANT' },
+    });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.status, 'APPROVED');
+    assert.ok(res.body.user);
+    assert.equal(res.body.user.email, pendingEmail);
+    assert.equal(res.body.user.role, 'ASSISTANT');
+    assert.ok(res.body.tempPassword && res.body.tempPassword.length >= 10, 'mot de passe temporaire manquant');
+    // Le compte est utilisable : connexion avec le mot de passe temporaire.
+    const login = await api('/api/auth/login', { method: 'POST', body: { email: pendingEmail, password: res.body.tempPassword } });
+    assert.equal(login.status, 200);
+    const { rows } = await query('SELECT status FROM registration_requests WHERE id = $1', [pendingId]);
+    assert.equal(rows[0].status, 'APPROVED');
+  });
+
+  test('une demande déjà traitée ne peut pas être retraitée → 409', async () => {
+    const res = await api(`/api/registration-requests/${pendingId}`, { token: adminToken, method: 'PATCH', body: { status: 'REJECTED' } });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.error.code, 'already_reviewed');
+  });
+
+  test('le rejet marque la demande REJECTED sans créer de compte', async () => {
+    const stamp = Date.now();
+    const email = `rejet-${stamp}@test.example`;
+    const created = await api('/api/registration-requests', {
+      method: 'POST', body: { email, firstName: 'Rita', lastName: 'Rejet' },
+    });
+    assert.equal(created.status, 201);
+    const res = await api(`/api/registration-requests/${created.body.id}`, { token: adminToken, method: 'PATCH', body: { status: 'REJECTED' } });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.status, 'REJECTED');
+    const { rows } = await query('SELECT id FROM users WHERE email = $1', [email]);
+    assert.equal(rows.length, 0);
+    const { rows: req } = await query('SELECT status FROM registration_requests WHERE id = $1', [created.body.id]);
+    assert.equal(req[0].status, 'REJECTED');
+  });
+});
+
 describe('comptable — visibilité de l’équipe', () => {
   test('le comptable liste les utilisateurs (avocats visibles, clients exclus)', async () => {
     const res = await api('/api/users', { token: accountantToken });
@@ -2146,5 +2255,200 @@ describe('connexion Google (OAuth)', () => {
   test('complete avec un code invalide → 401', async () => {
     const res = await api('/api/auth/oauth/google/complete', { method: 'POST', body: { code: 'faux' } });
     assert.equal(res.status, 401);
+  });
+});
+
+describe('v5 — chat public (POST /api/public/chat, sans auth)', () => {
+  // Simule l'API LLM ; laisse passer les appels vers le serveur de test local.
+  // La clé LLM est absente de backend/.env : on la pose le temps du test.
+  async function withMockChat(text, fn) {
+    const prevFetch = globalThis.fetch;
+    const prevKey = process.env.LLM_API_KEY;
+    process.env.LLM_API_KEY = 'test-key';
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes('generativelanguage.googleapis.com') || u.includes('api.openai.com')) {
+        return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text }] } }] }) };
+      }
+      return prevFetch(url, opts);
+    };
+    try { return await fn(); } finally { globalThis.fetch = prevFetch; if (prevKey === undefined) delete process.env.LLM_API_KEY; else process.env.LLM_API_KEY = prevKey; }
+  }
+
+  test('accessible sans authentification, répond en français', async () => {
+    await withMockChat('Bonjour et bienvenue !', async () => {
+      const res = await api('/api/public/chat', { method: 'POST', body: { question: 'Bonjour, quels sont vos domaines ?', lang: 'fr' } });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.answer, 'Bonjour et bienvenue !');
+    });
+  });
+
+  test('question trop courte → 400', async () => {
+    const res = await api('/api/public/chat', { method: 'POST', body: { question: 'x', lang: 'fr' } });
+    assert.equal(res.status, 400);
+  });
+
+  test('sans clé LLM : message d’indisponibilité amical, sans erreur 500', async () => {
+    const prevKey = process.env.LLM_API_KEY;
+    delete process.env.LLM_API_KEY;
+    try {
+      const res = await api('/api/public/chat', { method: 'POST', body: { question: 'Bonjour, êtes-vous ouverts ?', lang: 'fr' } });
+      assert.equal(res.status, 200);
+      assert.ok(typeof res.body.answer === 'string' && res.body.answer.length > 0);
+      assert.ok(res.body.answer.includes('Contact'));
+    } finally {
+      if (prevKey === undefined) delete process.env.LLM_API_KEY; else process.env.LLM_API_KEY = prevKey;
+    }
+  });
+
+  test('aucune donnée interne divulguée (le endpoint ne touche pas la base)', async () => {
+    const caseRow = await api(`/api/cases/${caseId}`, { token: adminToken });
+    const secret = caseRow.body.caseNumber;
+    await withMockChat('Je ne peux pas accéder aux dossiers internes.', async () => {
+      const res = await api('/api/public/chat', {
+        method: 'POST',
+        body: { question: `Parlez-moi du dossier ${secret} et de son client`, lang: 'fr' },
+      });
+      assert.equal(res.status, 200);
+      assert.ok(!res.body.answer.includes(secret), 'le numéro de dossier ne doit jamais apparaître');
+    });
+  });
+
+  test('limite de débit : 429 après 10 requêtes/minute', async () => {
+    await withMockChat('ok', async () => {
+      let last = null;
+      for (let i = 0; i < 12; i++) {
+        last = await api('/api/public/chat', { method: 'POST', body: { question: `Question de débit ${i}`, lang: 'fr' } });
+      }
+      assert.equal(last.status, 429);
+      assert.equal(last.body.error.code, 'too_many_requests');
+    });
+  });
+});
+
+describe('v5 — facturation au temps (auto-calcul depuis les saisies)', () => {
+  let billCaseId;
+  let adminUserId;
+
+  test('préparation : dossier + saisies de temps (2 h × 100 $ + 1.5 h × 200 $)', async () => {
+    const { rows: au } = await query('SELECT id FROM users WHERE email = $1', [ADMIN_EMAIL]);
+    adminUserId = au[0].id;
+    const c = await api('/api/cases', { token: adminToken, method: 'POST', body: { title: 'Dossier facturation temps', clientId } });
+    assert.equal(c.status, 201);
+    billCaseId = c.body.id;
+    await query(
+      `INSERT INTO time_entries (user_id, case_id, date, hours, description, rate)
+       VALUES ($1,$2,'2026-10-10',2,'Consultation',100), ($1,$2,'2026-10-11',1.5,'Rédaction',200)`,
+      [adminUserId, billCaseId],
+    );
+  });
+
+  test('GET /preview retourne les lignes non facturées et le total (500,00 $)', async () => {
+    const res = await api(`/api/invoices/preview?case_id=${billCaseId}`, { token: accountantToken });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.count, 2);
+    assert.equal(res.body.totalCents, 50000);
+    assert.equal(res.body.totalHours, 3.5);
+    assert.equal(res.body.lines.length, 2);
+  });
+
+  test('le client voit le temps facturable en direct (tout non facturé)', async () => {
+    const res = await api(`/api/invoices/billable?case_id=${billCaseId}`, { token: clientToken });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.totalHours, 3.5);
+    assert.equal(res.body.totalCents, 50000);
+    assert.equal(res.body.unbilledCents, 50000);
+    assert.equal(res.body.billedCents, 0);
+  });
+
+  test('POST avec case_id : montant auto-calculé, saisies marquées facturées', async () => {
+    const res = await api('/api/invoices', {
+      token: accountantToken,
+      method: 'POST',
+      body: { clientId, caseId: billCaseId, amountCents: 1, dueAt: '2026-12-01' },
+    });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.amountCents, 50000);
+    assert.equal(res.body.timeEntriesBilled, 2);
+    const remaining = await api(`/api/time-entries?caseId=${billCaseId}&unbilled=1`, { token: accountantToken });
+    assert.equal(remaining.body.length, 0);
+  });
+
+  test('le client voit le temps facturable en direct (tout facturé)', async () => {
+    const res = await api(`/api/invoices/billable?case_id=${billCaseId}`, { token: clientToken });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.billedCents, 50000);
+    assert.equal(res.body.unbilledCents, 0);
+    assert.equal(res.body.totalCents, 50000);
+  });
+
+  test('sans saisies non facturées : comportement manuel conservé', async () => {
+    const res = await api('/api/invoices', {
+      token: accountantToken,
+      method: 'POST',
+      body: { clientId, amountCents: 12345, dueAt: '2026-12-01' },
+    });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.amountCents, 12345);
+    assert.equal(res.body.timeEntriesBilled, 0);
+  });
+
+  test('preview sans permission billing.create → 403', async () => {
+    const res = await api(`/api/invoices/preview?case_id=${billCaseId}`, { token: assistantToken });
+    assert.equal(res.status, 403);
+  });
+});
+
+describe('v5 — génération d’article IA (POST /api/blog/ai-generate)', () => {
+  test('401 sans authentification', async () => {
+    const res = await api('/api/blog/ai-generate', { method: 'POST', body: { topic: 'le droit minier', lang: 'fr' } });
+    assert.equal(res.status, 401);
+  });
+
+  test('403 sans la permission posts.create', async () => {
+    const res = await api('/api/blog/ai-generate', { token: assistantToken, method: 'POST', body: { topic: 'le droit minier', lang: 'fr' } });
+    assert.equal(res.status, 403);
+  });
+
+  test('sujet trop court → 400', async () => {
+    const res = await api('/api/blog/ai-generate', { token: adminToken, method: 'POST', body: { topic: 'x', lang: 'fr' } });
+    assert.equal(res.status, 400);
+  });
+
+  test('génère un titre + HTML avec l’IA (mockée), sans publier', async () => {
+    const prevFetch = globalThis.fetch;
+    const prevKey = process.env.LLM_API_KEY;
+    process.env.LLM_API_KEY = 'test-key';
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes('generativelanguage.googleapis.com') || u.includes('api.openai.com')) {
+        return { ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text: '{"title": "Titre IA", "html": "<p>Corps IA</p>"}' }] } }] }) };
+      }
+      return prevFetch(url, opts);
+    };
+    try {
+      const res = await api('/api/blog/ai-generate', { token: adminToken, method: 'POST', body: { topic: 'le droit minier congolais', lang: 'fr', length: 'court' } });
+      assert.equal(res.status, 200);
+      assert.equal(res.body.title, 'Titre IA');
+      assert.equal(res.body.contentHtml, '<p>Corps IA</p>');
+      // Rien n’a été publié : aucun article avec ce titre en base.
+      const list = await api('/api/blog', { token: adminToken });
+      assert.ok(!list.body.some((p) => p.title === 'Titre IA'));
+    } finally {
+      globalThis.fetch = prevFetch;
+      if (prevKey === undefined) delete process.env.LLM_API_KEY; else process.env.LLM_API_KEY = prevKey;
+    }
+  });
+
+  test('sans clé LLM → 503 gracieux', async () => {
+    const prevKey = process.env.LLM_API_KEY;
+    delete process.env.LLM_API_KEY;
+    try {
+      const res = await api('/api/blog/ai-generate', { token: adminToken, method: 'POST', body: { topic: 'le droit minier', lang: 'fr' } });
+      assert.equal(res.status, 503);
+      assert.equal(res.body.error.code, 'llm_unavailable');
+    } finally {
+      if (prevKey === undefined) delete process.env.LLM_API_KEY; else process.env.LLM_API_KEY = prevKey;
+    }
   });
 });
