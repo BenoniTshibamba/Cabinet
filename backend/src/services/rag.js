@@ -58,11 +58,19 @@ export async function indexDocument(doc) {
   const parts = chunks(text);
   await query('DELETE FROM document_chunks WHERE document_id=$1', [doc.id]);
 
-  for (const part of parts) {
-    const vector = await embed(part);
-    await query(
-      'INSERT INTO document_chunks(document_id,content,embedding_json) VALUES($1,$2,$3)',
-      [doc.id, part, JSON.stringify(vector)],
+  // Embeddings en parallèle par lots de 8 : beaucoup plus rapide qu'en séquence
+  // (un document de ~60 chunks passe de ~60 appels successifs à ~8 vagues).
+  const BATCH = 8;
+  for (let i = 0; i < parts.length; i += BATCH) {
+    const batch = parts.slice(i, i + BATCH);
+    const vectors = await Promise.all(batch.map((part) => embed(part)));
+    await Promise.all(
+      batch.map((part, j) =>
+        query(
+          'INSERT INTO document_chunks(document_id,content,embedding_json) VALUES($1,$2,$3)',
+          [doc.id, part, JSON.stringify(vectors[j])],
+        ),
+      ),
     );
   }
 

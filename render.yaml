@@ -21,7 +21,7 @@ services:
       - key: NODE_ENV
         value: production
       - key: PORT
-        value: 4000
+        value: "4000"
       # SQLite sur le disque persistant (la migration tourne automatiquement au démarrage).
       - key: DATABASE_PATH
         value: /app/backend/data/cabinet-elite.db

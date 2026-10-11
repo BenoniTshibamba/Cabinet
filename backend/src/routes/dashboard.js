@@ -8,25 +8,32 @@ router.use(requireAuth, requirePermission('dashboard.read'));
 router.get('/', async (req, res, next) => {
   try {
     const { user } = req;
-    const caseScope = user.role === 'LAWYER' ? 'WHERE lawyer_id = $1' : user.role === 'CLIENT' ? 'WHERE client_id = $1' : '';
-    const caseParams = caseScope ? [user.role === 'CLIENT' ? user.clientId ?? -1 : user.id] : [];
+    // Portée par rôle + exclusion systématique de la corbeille (deleted_at).
+    // `a` = alias (ou nom) de la table cases dans chaque requête.
+    const scopeFor = (a) => user.role === 'LAWYER'
+      ? `WHERE ${a}.deleted_at IS NULL AND ${a}.lawyer_id = $1`
+      : user.role === 'CLIENT'
+        ? `WHERE ${a}.deleted_at IS NULL AND ${a}.client_id = $1`
+        : `WHERE ${a}.deleted_at IS NULL`;
+    const caseParams = user.role === 'LAWYER' || user.role === 'CLIENT'
+      ? [user.role === 'CLIENT' ? user.clientId ?? -1 : user.id] : [];
 
     const [cases, clientsCount, unpaidInvoices, documentsCount, recentCases, revenueByMonth, openByLawyer, upcomingDeadlines, overdueInvoices] = await Promise.all([
-      query(`SELECT status, count(*)::int AS n FROM cases ${caseScope} GROUP BY status`, caseParams),
-      user.role === 'CLIENT' ? Promise.resolve({ rows: [{ n: 0 }] }) : query('SELECT count(*)::int AS n FROM clients'),
+      query(`SELECT status, count(*)::int AS n FROM cases ${scopeFor('cases')} GROUP BY status`, caseParams),
+      user.role === 'CLIENT' ? Promise.resolve({ rows: [{ n: 0 }] }) : query('SELECT count(*)::int AS n FROM clients WHERE deleted_at IS NULL'),
       query(
         `SELECT count(*)::int AS n, COALESCE(sum(amount_cents + tax_cents), 0)::bigint AS total
          FROM invoices WHERE status NOT IN ('PAYEE','ANNULEE') ${user.role === 'CLIENT' ? 'AND client_id = $1' : ''}`,
         user.role === 'CLIENT' ? [user.clientId ?? -1] : [],
       ),
       query(
-        `SELECT count(*)::int AS n FROM documents d JOIN cases cs ON cs.id = d.case_id ${caseScope.replace('WHERE', 'WHERE cs.')}`,
+        `SELECT count(*)::int AS n FROM documents d JOIN cases cs ON cs.id = d.case_id ${scopeFor('cs')}`,
         caseParams,
       ),
       query(
         `SELECT cs.id, cs.title, cs.status, cs.updated_at, cl.first_name, cl.last_name
          FROM cases cs JOIN clients cl ON cl.id = cs.client_id
-         ${caseScope} ORDER BY cs.updated_at DESC LIMIT 6`,
+         ${scopeFor('cs')} ORDER BY cs.updated_at DESC LIMIT 6`,
         caseParams,
       ),
       // Revenus facturés par mois (6 derniers mois, factures non annulées).
@@ -44,7 +51,7 @@ router.get('/', async (req, res, next) => {
         : query(
             `SELECT COALESCE(lw.first_name || ' ' || lw.last_name, 'Non assigné') AS lawyer_name, count(*)::int AS n
              FROM cases cs LEFT JOIN users lw ON lw.id = cs.lawyer_id
-             WHERE cs.status IN ('NOUVEAU','EN_COURS','EN_ATTENTE')
+             WHERE cs.deleted_at IS NULL AND cs.status IN ('NOUVEAU','EN_COURS','EN_ATTENTE')
              ${user.role === 'LAWYER' ? 'AND cs.lawyer_id = $1' : ''}
              GROUP BY lawyer_name ORDER BY n DESC LIMIT 10`,
             user.role === 'LAWYER' ? [user.id] : [],
@@ -53,8 +60,8 @@ router.get('/', async (req, res, next) => {
       query(
         `SELECT cs.id, cs.case_number, cs.title, cs.due_date,
                 CASE WHEN cs.due_date < date('now') THEN 1 ELSE 0 END AS overdue
-         FROM cases cs ${caseScope}
-         ${caseScope ? 'AND' : 'WHERE'} cs.due_date IS NOT NULL
+         FROM cases cs ${scopeFor('cs')}
+         AND cs.due_date IS NOT NULL
            AND cs.due_date <= date('now', '+7 days')
            AND cs.status NOT IN ('TERMINE','ARCHIVE')
          ORDER BY cs.due_date ASC LIMIT 20`,

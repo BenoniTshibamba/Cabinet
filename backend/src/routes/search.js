@@ -16,7 +16,7 @@ router.get('/', async (req, res, next) => {
     if (permissions.has('clients.read')) {
       const { rows } = await query(
         `SELECT id, first_name, last_name, email FROM clients
-         WHERE first_name ILIKE $1 OR last_name ILIKE $1 OR email ILIKE $1 LIMIT 10`,
+         WHERE deleted_at IS NULL AND (first_name ILIKE $1 OR last_name ILIKE $1 OR email ILIKE $1) LIMIT 10`,
         [like],
       );
       results.clients = rows.map((c) => ({ id: c.id, label: `${c.first_name} ${c.last_name}`, meta: c.email }));
@@ -24,7 +24,7 @@ router.get('/', async (req, res, next) => {
 
     if (permissions.has('cases.read')) {
       const params = [`%${q}%`];
-      const conds = ['(cs.title ILIKE $1 OR cs.case_number ILIKE $1)'];
+      const conds = ['cs.deleted_at IS NULL', '(cs.title ILIKE $1 OR cs.case_number ILIKE $1)'];
       if (req.query.status) { params.push(req.query.status); conds.push(`cs.status = $${params.length}`); }
       if (req.query.priority) { params.push(req.query.priority); conds.push(`cs.priority = $${params.length}`); }
       if (req.query.lawyerId) { params.push(Number(req.query.lawyerId)); conds.push(`cs.lawyer_id = $${params.length}`); }
@@ -44,7 +44,7 @@ router.get('/', async (req, res, next) => {
       const params = scope ? [like, role === 'CLIENT' ? clientId ?? -1 : userId] : [like];
       const { rows } = await query(
         `SELECT d.id, d.name, d.case_id FROM documents d JOIN cases cs ON cs.id = d.case_id
-         WHERE d.name ILIKE $1 ${scope} LIMIT 10`,
+         WHERE cs.deleted_at IS NULL AND d.name ILIKE $1 ${scope} LIMIT 10`,
         params,
       );
       results.documents = rows.map((d) => ({ id: d.id, label: d.name, meta: `Dossier #${d.case_id}`, caseId: d.case_id }));

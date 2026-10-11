@@ -25,7 +25,7 @@ router.get('/', requirePermission('cases.read'), async (req, res, next) => {
       const { rows } = await query(
         `SELECT cs.id, cs.case_number, cs.title, cs.due_date, cs.status
          FROM cases cs
-         WHERE cs.due_date IS NOT NULL AND cs.due_date >= $1 AND cs.due_date <= $2 ${scope}
+         WHERE cs.deleted_at IS NULL AND cs.due_date IS NOT NULL AND cs.due_date >= $1 AND cs.due_date <= $2 ${scope}
          ORDER BY cs.due_date ASC`,
         params,
       );

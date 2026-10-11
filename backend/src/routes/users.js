@@ -169,7 +169,7 @@ router.post('/', requirePermission('users.create'), async (req, res, next) => {
     // Un compte CLIENT donne accès au site : il doit être rattaché à un dossier client existant.
     let clientId = null;
     if (body.role === 'CLIENT') {
-      const { rows: c } = await query('SELECT id FROM clients WHERE id = $1', [body.clientId]);
+      const { rows: c } = await query('SELECT id FROM clients WHERE id = $1 AND deleted_at IS NULL', [body.clientId]);
       if (!c[0]) throw new HttpError(404, 'client_not_found', 'Dossier client introuvable.');
       clientId = c[0].id;
     }
@@ -230,6 +230,47 @@ router.patch('/:id', requirePermission('users.update'), async (req, res, next) =
     res.json(publicUser(after));
   } catch (err) {
     next(err instanceof z.ZodError ? new HttpError(400, 'invalid_body', err.issues[0].message) : err);
+  }
+});
+
+/**
+ * Désactivation d'un utilisateur (suppression logique : l'historique et l'audit
+ * sont préservés, le compte ne peut plus se connecter). Réactivation possible
+ * via PATCH /users/:id { isActive: true }.
+ */
+router.delete('/:id', requirePermission('users.delete'), async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, 'invalid_id', 'Identifiant invalide.');
+    if (id === req.user.id) throw new HttpError(400, 'cannot_deactivate_self', 'Vous ne pouvez pas désactiver votre propre compte.');
+    const { rows } = await query(
+      `SELECT u.*, r.name AS role FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`,
+      [id],
+    );
+    const target = rows[0];
+    if (!target) throw new HttpError(404, 'not_found', 'Utilisateur introuvable.');
+    if (!target.is_active) throw new HttpError(400, 'already_inactive', 'Ce compte est déjà désactivé.');
+    if (target.role === 'SUPER_ADMIN') {
+      const { rows: c } = await query(
+        `SELECT COUNT(*) AS n FROM users u JOIN roles r ON r.id = u.role_id
+         WHERE r.name = 'SUPER_ADMIN' AND u.is_active = 1`,
+      );
+      if (Number(c[0].n) <= 1) throw new HttpError(400, 'last_super_admin', 'Impossible de désactiver le dernier super-administrateur.');
+    }
+    const { rows: cases } = await query('SELECT COUNT(*) AS n FROM cases WHERE lawyer_id = $1 AND deleted_at IS NULL', [id]);
+    if (Number(cases[0].n) > 0) {
+      throw new HttpError(409, 'has_assigned_cases', `Cet utilisateur a encore ${cases[0].n} dossier(s) assigné(s). Réassignez-les avant de le désactiver.`);
+    }
+    await query('UPDATE users SET is_active = 0, updated_at = now() WHERE id = $1', [id]);
+    // Les sessions existantes sont révoquées immédiatement.
+    await query('UPDATE refresh_tokens SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL', [id]);
+    await logAudit({
+      userId: req.user.id, action: 'USER_DEACTIVATED', resourceType: 'user', resourceId: id,
+      oldValues: publicUser(target), ip: req.ip,
+    });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
   }
 });
 

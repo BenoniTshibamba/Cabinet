@@ -58,17 +58,22 @@ router.post('/', async (req, res, next) => {
     );
     const saved = rows[0];
 
-    // Notification in-app pour tous les administrateurs actifs.
-    const { rows: admins } = await query(
-      `SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id
-       WHERE r.name IN ('SUPER_ADMIN','ADMIN') AND u.is_active = 1`,
-    );
-    if (admins.length) {
-      await notifyMany(admins.map((a) => a.id), {
-        type: 'CONTACT_MESSAGE',
-        title: `Nouveau message de contact : ${b.name}`,
-        body: b.message.slice(0, 200),
-      });
+    // Notification in-app pour tous les administrateurs actifs (best effort :
+    // un échec ici ne doit jamais transformer un message enregistré en erreur).
+    try {
+      const { rows: admins } = await query(
+        `SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id
+         WHERE r.name IN ('SUPER_ADMIN','ADMIN') AND u.is_active = 1`,
+      );
+      if (admins.length) {
+        await notifyMany(admins.map((a) => a.id), {
+          type: 'CONTACT_MESSAGE',
+          title: `Nouveau message de contact : ${b.name}`,
+          body: b.message.slice(0, 200),
+        });
+      }
+    } catch (err) {
+      console.error('Échec de la notification admin (message de contact conservé) :', err.message);
     }
 
     // Courriel au cabinet si la messagerie est configurée (best effort).

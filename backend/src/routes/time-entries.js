@@ -30,7 +30,7 @@ const SELECT = `SELECT te.*, u.first_name, u.last_name, cs.title AS case_title, 
   cl.id AS client_id, cl.first_name AS client_first_name, cl.last_name AS client_last_name
   FROM time_entries te
   JOIN users u ON u.id = te.user_id
-  JOIN cases cs ON cs.id = te.case_id
+  JOIN cases cs ON cs.id = te.case_id AND cs.deleted_at IS NULL
   JOIN clients cl ON cl.id = cs.client_id`;
 
 /** Un avocat ne voit que ses propres saisies ; les autres rôles autorisés voient tout. */

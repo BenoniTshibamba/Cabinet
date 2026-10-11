@@ -22,6 +22,8 @@ const PATHS = {
   check: 'm5 12 5 5 9-9',
   close: 'm6 6 12 12M18 6 6 18',
   file: 'M7 3h7l4 4v14H7z',
+  lock: 'M6 11h12v9H6zM9 11V8a3 3 0 0 1 6 0v3',
+  shield: 'M12 3l7 3v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V6zM9.5 12l2 2 3.5-4',
 };
 export function icon(name, cls = 'icon') {
   const svg = document.createElementNS(NS, 'svg');

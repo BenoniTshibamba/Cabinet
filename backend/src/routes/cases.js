@@ -4,6 +4,7 @@ import { query } from '../db/pool.js';
 import { requireAuth, requirePermission, HttpError } from '../middleware/auth.js';
 import { logAudit } from '../services/audit.js';
 import { notify } from '../services/notify.js';
+import { hardDeleteCase } from '../services/trash.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -77,7 +78,7 @@ router.get('/', requirePermission('cases.read'), async (req, res, next) => {
        FROM cases cs
        JOIN clients cl ON cl.id = cs.client_id
        LEFT JOIN users lw ON lw.id = cs.lawyer_id
-       WHERE 1=1 ${filters.map((f) => `AND ${f}`).join(' ')} ${scope.sql}
+       WHERE 1=1 AND cs.deleted_at IS NULL ${filters.map((f) => `AND ${f}`).join(' ')} ${scope.sql}
        ORDER BY cs.created_at DESC LIMIT 200`,
       params,
     );
@@ -87,12 +88,12 @@ router.get('/', requirePermission('cases.read'), async (req, res, next) => {
   }
 });
 
-async function loadCaseOr404(id) {
+async function loadCaseOr404(id, { includeDeleted = false } = {}) {
   const { rows } = await query(
     `SELECT cs.*, cl.first_name AS client_first_name, cl.last_name AS client_last_name,
             lw.first_name AS lawyer_first_name, lw.last_name AS lawyer_last_name
      FROM cases cs JOIN clients cl ON cl.id = cs.client_id LEFT JOIN users lw ON lw.id = cs.lawyer_id
-     WHERE cs.id = $1`,
+     WHERE cs.id = $1 ${includeDeleted ? '' : 'AND cs.deleted_at IS NULL'}`,
     [id],
   );
   if (!rows[0]) throw new HttpError(404, 'not_found', 'Dossier introuvable.');
@@ -106,6 +107,20 @@ async function assertVisible(user, row) {
   }
   if (user.role === 'CLIENT' && row.client_id !== user.clientId) throw new HttpError(403, 'forbidden', 'Accès refusé à ce dossier.');
 }
+
+/* Corbeille : liste les dossiers supprimés (restaurables 24h). Définie avant /:id. */
+router.get('/trash', requirePermission('cases.delete'), async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      `SELECT cs.*, cl.first_name AS client_first_name, cl.last_name AS client_last_name
+       FROM cases cs JOIN clients cl ON cl.id = cs.client_id
+       WHERE cs.deleted_at IS NOT NULL ORDER BY cs.deleted_at DESC LIMIT 200`,
+    );
+    res.json(rows.map((c) => ({ ...toCase(c), deletedAt: c.deleted_at })));
+  } catch (err) {
+    next(err);
+  }
+});
 
 router.get('/:id', requirePermission('cases.read'), async (req, res, next) => {
   try {
@@ -132,6 +147,9 @@ const caseSchema = z.object({
 router.post('/', requirePermission('cases.create'), async (req, res, next) => {
   try {
     const b = caseSchema.parse(req.body);
+    // On ne crée jamais un dossier pour un client en corbeille.
+    const { rows: cli } = await query('SELECT id FROM clients WHERE id = $1 AND deleted_at IS NULL', [b.clientId]);
+    if (!cli[0]) throw new HttpError(400, 'invalid_client', 'Client introuvable ou en corbeille.');
     const caseNumber = genCaseNumber();
     const { rows } = await query(
       `INSERT INTO cases (case_number, title, client_id, lawyer_id, case_type, description, priority, due_date, created_by)
@@ -178,11 +196,37 @@ router.patch('/:id', requirePermission('cases.update'), async (req, res, next) =
   }
 });
 
+/* Restauration d'un dossier depuis la corbeille (24h). */
+router.post('/:id/restore', requirePermission('cases.delete'), async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      'UPDATE cases SET deleted_at = NULL, updated_at = now() WHERE id = $1 AND deleted_at IS NOT NULL RETURNING *',
+      [req.params.id],
+    );
+    if (!rows[0]) throw new HttpError(404, 'not_found', 'Dossier introuvable dans la corbeille.');
+    const restored = await loadCaseOr404(rows[0].id);
+    await logAudit({ userId: req.user.id, action: 'CASE_RESTORED', resourceType: 'case', resourceId: req.params.id, newValues: toCase(restored), ip: req.ip });
+    res.json(toCase(restored));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* Suppression : par défaut mise en corbeille (restaurable 24h) ;
+   ?permanent=1 pour une suppression définitive immédiate. */
 router.delete('/:id', requirePermission('cases.delete'), async (req, res, next) => {
   try {
-    const before = await loadCaseOr404(req.params.id);
-    await query('DELETE FROM cases WHERE id = $1', [req.params.id]);
-    await logAudit({ userId: req.user.id, action: 'CASE_DELETED', resourceType: 'case', resourceId: req.params.id, oldValues: toCase(before), ip: req.ip });
+    const permanent = String(req.query.permanent ?? '') === '1';
+    const before = await loadCaseOr404(req.params.id, { includeDeleted: permanent });
+    if (!permanent) {
+      await assertVisible(req.user, before);
+      await query('UPDATE cases SET deleted_at = now(), updated_at = now() WHERE id = $1', [req.params.id]);
+      await logAudit({ userId: req.user.id, action: 'CASE_TRASHED', resourceType: 'case', resourceId: req.params.id, oldValues: toCase(before), ip: req.ip });
+      res.json({ ...toCase(before), deletedAt: new Date().toISOString() });
+      return;
+    }
+    const gone = await hardDeleteCase(req.params.id, { userId: req.user.id, ip: req.ip, auditAction: 'CASE_DELETED' });
+    if (!gone) throw new HttpError(404, 'not_found', 'Dossier introuvable.');
     res.status(204).end();
   } catch (err) {
     next(err);

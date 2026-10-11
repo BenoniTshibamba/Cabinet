@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { query } from '../db/pool.js';
 import { requireAuth, requirePermission, HttpError } from '../middleware/auth.js';
 import { logAudit } from '../services/audit.js';
+import { hardDeleteClient } from '../services/trash.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -20,11 +21,23 @@ const toClient = (c) => ({
   updatedAt: c.updated_at,
 });
 
+/* Corbeille : liste les clients supprimés (restaurables 24h). Définie avant /:id. */
+router.get('/trash', requirePermission('clients.delete'), async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      'SELECT * FROM clients WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 200',
+    );
+    res.json(rows.map((c) => ({ ...toClient(c), deletedAt: c.deleted_at })));
+  } catch (err) {
+    next(err);
+  }
+});
+
 router.get('/', requirePermission('clients.read'), async (req, res, next) => {
   try {
     const q = String(req.query.q ?? '').trim();
     const params = [];
-    const conds = [];
+    const conds = ['deleted_at IS NULL'];
     if (q) {
       params.push(`%${q}%`);
       conds.push(`(first_name ILIKE $${params.length} OR last_name ILIKE $${params.length} OR email ILIKE $${params.length} OR company ILIKE $${params.length})`);
@@ -33,7 +46,7 @@ router.get('/', requirePermission('clients.read'), async (req, res, next) => {
     // qui lui est assigné ou partagé avec lui.
     if (req.user.role === 'LAWYER') {
       params.push(req.user.id);
-      conds.push(`EXISTS (SELECT 1 FROM cases cs WHERE cs.client_id = clients.id AND (cs.lawyer_id = $${params.length} OR EXISTS (SELECT 1 FROM case_shares sh WHERE sh.case_id = cs.id AND sh.lawyer_id = $${params.length})))`);
+      conds.push(`EXISTS (SELECT 1 FROM cases cs WHERE cs.client_id = clients.id AND cs.deleted_at IS NULL AND (cs.lawyer_id = $${params.length} OR EXISTS (SELECT 1 FROM case_shares sh WHERE sh.case_id = cs.id AND sh.lawyer_id = $${params.length})))`);
     }
     const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
     const { rows } = await query(`SELECT * FROM clients ${where} ORDER BY created_at DESC LIMIT 200`, params);
@@ -47,7 +60,7 @@ router.get('/', requirePermission('clients.read'), async (req, res, next) => {
 async function assertClientVisible(user, clientId) {
   if (user.role !== 'LAWYER') return;
   const { rows } = await query(
-    `SELECT 1 FROM cases cs WHERE cs.client_id = $1
+    `SELECT 1 FROM cases cs WHERE cs.client_id = $1 AND cs.deleted_at IS NULL
      AND (cs.lawyer_id = $2 OR EXISTS (SELECT 1 FROM case_shares sh WHERE sh.case_id = cs.id AND sh.lawyer_id = $2)) LIMIT 1`,
     [clientId, user.id],
   );
@@ -56,7 +69,7 @@ async function assertClientVisible(user, clientId) {
 
 router.get('/:id', requirePermission('clients.read'), async (req, res, next) => {
   try {
-    const { rows } = await query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
+    const { rows } = await query('SELECT * FROM clients WHERE id = $1 AND deleted_at IS NULL', [req.params.id]);
     if (!rows[0]) throw new HttpError(404, 'not_found', 'Client introuvable.');
     await assertClientVisible(req.user, req.params.id);
     res.json(toClient(rows[0]));
@@ -93,7 +106,7 @@ router.post('/', requirePermission('clients.create'), async (req, res, next) => 
 router.patch('/:id', requirePermission('clients.update'), async (req, res, next) => {
   try {
     const b = clientSchema.partial().parse(req.body);
-    const { rows: before } = await query('SELECT * FROM clients WHERE id = $1', [req.params.id]);
+    const { rows: before } = await query('SELECT * FROM clients WHERE id = $1 AND deleted_at IS NULL', [req.params.id]);
     if (!before[0]) throw new HttpError(404, 'not_found', 'Client introuvable.');
     await assertClientVisible(req.user, req.params.id);
 
@@ -112,12 +125,46 @@ router.patch('/:id', requirePermission('clients.update'), async (req, res, next)
   }
 });
 
+/* Restauration d'un client depuis la corbeille (24h). */
+router.post('/:id/restore', requirePermission('clients.delete'), async (req, res, next) => {
+  try {
+    const { rows } = await query(
+      'UPDATE clients SET deleted_at = NULL, updated_at = now() WHERE id = $1 AND deleted_at IS NOT NULL RETURNING *',
+      [req.params.id],
+    );
+    if (!rows[0]) throw new HttpError(404, 'not_found', 'Client introuvable dans la corbeille.');
+    await logAudit({ userId: req.user.id, action: 'CLIENT_RESTORED', resourceType: 'client', resourceId: req.params.id, newValues: toClient(rows[0]), ip: req.ip });
+    res.json(toClient(rows[0]));
+  } catch (err) {
+    next(err);
+  }
+});
+
+/* Suppression : par défaut mise en corbeille (restaurable 24h) ;
+   ?permanent=1 pour une suppression définitive immédiate. */
 router.delete('/:id', requirePermission('clients.delete'), async (req, res, next) => {
   try {
     await assertClientVisible(req.user, req.params.id);
-    const { rows } = await query('DELETE FROM clients WHERE id = $1 RETURNING *', [req.params.id]);
-    if (!rows[0]) throw new HttpError(404, 'not_found', 'Client introuvable.');
-    await logAudit({ userId: req.user.id, action: 'CLIENT_DELETED', resourceType: 'client', resourceId: req.params.id, oldValues: toClient(rows[0]), ip: req.ip });
+    const permanent = String(req.query.permanent ?? '') === '1';
+    if (!permanent) {
+      // Seuls les dossiers actifs bloquent la mise en corbeille.
+      const { rows: deps } = await query(
+        'SELECT COUNT(*) AS n FROM cases WHERE client_id = $1 AND deleted_at IS NULL', [req.params.id],
+      );
+      if (Number(deps[0]?.n ?? 0) > 0) {
+        throw new HttpError(409, 'has_dependencies', 'Ce client a des dossiers associés : mettez d\u2019abord ses dossiers en corbeille.');
+      }
+      const { rows } = await query(
+        'UPDATE clients SET deleted_at = now(), updated_at = now() WHERE id = $1 AND deleted_at IS NULL RETURNING *',
+        [req.params.id],
+      );
+      if (!rows[0]) throw new HttpError(404, 'not_found', 'Client introuvable.');
+      await logAudit({ userId: req.user.id, action: 'CLIENT_TRASHED', resourceType: 'client', resourceId: req.params.id, oldValues: toClient(rows[0]), ip: req.ip });
+      res.json({ ...toClient(rows[0]), deletedAt: rows[0].deleted_at });
+      return;
+    }
+    const gone = await hardDeleteClient(req.params.id, { userId: req.user.id, ip: req.ip, auditAction: 'CLIENT_DELETED' });
+    if (!gone) throw new HttpError(404, 'not_found', 'Client introuvable.');
     res.status(204).end();
   } catch (err) {
     // Un client lié à des dossiers ne peut pas être supprimé (contrainte de clé étrangère).

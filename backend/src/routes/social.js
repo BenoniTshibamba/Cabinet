@@ -359,7 +359,7 @@ async function userCaseIdentity(userId) {
 // Vérifie qu'un document existant est lisible par l'utilisateur (visibilité du dossier).
 async function assertDocReadable(docId, user) {
   const { rows } = await query(
-    `SELECT d.id, c.lawyer_id, c.client_id FROM documents d JOIN cases c ON c.id=d.case_id WHERE d.id=$1`, [docId]);
+    `SELECT d.id, c.lawyer_id, c.client_id FROM documents d JOIN cases c ON c.id=d.case_id WHERE d.id=$1 AND c.deleted_at IS NULL`, [docId]);
   if (!rows[0]) throw new HttpError(404, 'not_found', 'Document introuvable.');
   await assertVisible(user, rows[0]);
   return rows[0];

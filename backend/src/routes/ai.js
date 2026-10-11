@@ -45,14 +45,14 @@ router.post('/ask', requirePermission('ai.ask'), async (req, res, next) => {
     } else if (isClient) {
       // Un client ne voit QUE les documents de ses propres dossiers (jamais tout le cabinet).
       const { rows } = await query(
-        'SELECT d.* FROM documents d JOIN cases c ON c.id=d.case_id WHERE c.client_id=$1',
+        'SELECT d.* FROM documents d JOIN cases c ON c.id=d.case_id WHERE c.client_id=$1 AND c.deleted_at IS NULL',
         [req.user.clientId],
       );
       docs = rows;
     } else {
       const { rows } = await query(
         `SELECT d.* FROM documents d JOIN cases c ON c.id=d.case_id
-         WHERE ${req.user.role === 'LAWYER' ? 'c.lawyer_id=$1' : '1=1'}`,
+         WHERE c.deleted_at IS NULL AND ${req.user.role === 'LAWYER' ? 'c.lawyer_id=$1' : '1=1'}`,
         req.user.role === 'LAWYER' ? [req.user.id] : [],
       );
       docs = rows;
@@ -76,7 +76,7 @@ router.post('/ask', requirePermission('ai.ask'), async (req, res, next) => {
        FROM document_chunks dc
        JOIN documents d ON d.id=dc.document_id
        JOIN cases c ON c.id=d.case_id
-       WHERE dc.document_id IN (${placeholders})`,
+       WHERE c.deleted_at IS NULL AND dc.document_id IN (${placeholders})`,
       ids,
     );
 
@@ -96,7 +96,24 @@ router.post('/ask', requirePermission('ai.ask'), async (req, res, next) => {
       .sort((a, b2) => b2.score - a.score)
       .slice(0, 8);
 
-    const context = ranked.map((x, i) =>
+    // Garde-fou de pertinence : sans seuil, une question sans rapport (ex. une
+    // simple salutation) cite quand même les « meilleurs » extraits, même s'ils
+    // n'ont rien à voir (ex. un PDF sans rapport avec le droit). Sous ce seuil,
+    // on répond honnêtement qu'aucun document pertinent n'a été trouvé plutôt
+    // que de citer un document hors sujet.
+    const MIN_SCORE = 0.3;
+    const relevant = ranked.filter((x) => x.score >= MIN_SCORE);
+    if (!relevant.length) {
+      return res.json({
+        answer: msg(
+          'Je n’ai trouvé aucun document pertinent pour cette question dans les dossiers accessibles.',
+          'I found no relevant document for this question in the accessible cases.',
+        ),
+        sources: [],
+      });
+    }
+
+    const context = relevant.map((x, i) =>
       `SOURCE ${i + 1}\nDocument: ${x.original_name}\nDossier: ${x.case_number} — ${x.title}\nExtrait:\n${x.content}`,
     ).join('\n\n');
 
@@ -121,7 +138,7 @@ CONTEXTE :\n${context}`;
 
     res.json({
       answer,
-      sources: ranked.map((x, i) => ({
+      sources: relevant.map((x, i) => ({
         number: i + 1,
         documentId: x.document_id,
         name: x.original_name,

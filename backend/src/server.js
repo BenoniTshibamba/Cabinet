@@ -29,6 +29,7 @@ requireEnvSecret('JWT_REFRESH_SECRET');
 import { createApp } from './app.js';
 import { ensureDatabase, ensureFirstAdmin } from './db/bootstrap.js';
 import { runDeadlineCheck } from './services/deadlines.js';
+import { startTrashPurge } from './services/trash.js';
 
 const port = Number(process.env.PORT) || 4000;
 
@@ -52,6 +53,10 @@ const server = app.listen(port, () => {
 const DAY_MS = 24 * 3600 * 1000;
 setTimeout(() => runDeadlineCheck().catch((err) => console.error('[deadlines]', err.message)), 60 * 1000);
 setInterval(() => runDeadlineCheck().catch((err) => console.error('[deadlines]', err.message)), DAY_MS);
+
+// Corbeille 24h : purge définitive des clients/dossiers supprimés depuis plus
+// de 24h (première purge 5 min après le démarrage, puis toutes les heures).
+startTrashPurge();
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => server.close(() => process.exit(0)));

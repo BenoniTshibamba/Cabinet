@@ -82,7 +82,7 @@ router.get('/documents/mine', requirePermission('documents.read'), async (req, r
        FROM documents d
        JOIN users u ON u.id = d.uploaded_by
        JOIN cases cs ON cs.id = d.case_id
-       WHERE 1=1 ${scope.sql} ORDER BY d.created_at DESC LIMIT 200`,
+       WHERE cs.deleted_at IS NULL ${scope.sql} ORDER BY d.created_at DESC LIMIT 200`,
       params,
     );
     res.json(rows.map((d) => ({ ...toDoc(d), caseId: d.case_id, caseTitle: d.case_title, caseNumber: d.case_number })));

@@ -17,7 +17,7 @@ export async function runDeadlineCheck() {
     `SELECT cs.id, cs.case_number, cs.title, cs.due_date, cs.lawyer_id,
             u.email AS lawyer_email, u.first_name, u.last_name
      FROM cases cs LEFT JOIN users u ON u.id = cs.lawyer_id
-     WHERE cs.due_date IS NOT NULL AND cs.due_date <= $1
+     WHERE cs.deleted_at IS NULL AND cs.due_date IS NOT NULL AND cs.due_date <= $1
        AND cs.status NOT IN ('TERMINE','ARCHIVE')`,
     [soon],
   );
