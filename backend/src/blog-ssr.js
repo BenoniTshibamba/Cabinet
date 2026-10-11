@@ -46,9 +46,6 @@ const BLOG_CSS = `
 .blog-card h2 a{color:inherit;text-decoration:none}
 .blog-card h2 a:hover{color:#b08d3e}
 .blog-meta{font-size:.85rem;color:#8a8f98;margin-bottom:.5rem}
-.byline{display:inline-flex;align-items:center;gap:.45rem;vertical-align:middle}
-.byline-photo{width:34px;height:34px;border-radius:50%;object-fit:cover;flex:none}
-.byline-initials{width:34px;height:34px;border-radius:50%;background:#0f1e33;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-size:.78rem;font-weight:700;flex:none;letter-spacing:.02em}
 .blog-excerpt{color:#3c4450;line-height:1.65;margin:0}
 .blog-read{color:#b08d3e;font-weight:600;text-decoration:none}
 .blog-article h1{font-family:'Frank Ruhl Libre',Georgia,serif;font-size:2.4rem;color:#0f1e33;line-height:1.2;margin:0 0 .75rem}
@@ -79,17 +76,11 @@ const BLOG_CSS = `
 @media(max-width:640px){.blog-card{flex-direction:column}.blog-card img{width:100%;height:200px}}
 `;
 
-/** Langue du visiteur pour les libellés de navigation (FR/EN).
- *  ?lang=en|fr explicite en priorité, puis la langue choisie sur le site
- *  (localStorage 'cej_lang', synchronisée côté client), sinon français
- *  par défaut comme la SPA. On n'utilise PAS l'en-tête Accept-Language :
- *  un téléphone en anglais affichait le menu en anglais alors que le
- *  contenu du site est en français. */
+/** Langue du visiteur pour les libellés de navigation (FR/EN) : ?lang=en ou Accept-Language. */
 function reqLang(req) {
-  const q = String(req.query.lang || '').toLowerCase();
-  if (q.startsWith('en')) return 'en';
-  if (q.startsWith('fr')) return 'fr';
-  return 'fr';
+  if (String(req.query.lang || '').toLowerCase().startsWith('en')) return 'en';
+  const al = String(req.headers['accept-language'] || '').split(',')[0] || '';
+  return /^en\b/i.test(al.trim()) ? 'en' : 'fr';
 }
 /** Libellés du menu complet (identique à la page d'accueil), FR/EN. */
 function navLabels(lang) {
@@ -111,7 +102,6 @@ function blogHeader(firm, lang) {
     <nav class="public-nav">
       <a class="public-nav-link" href="/">${L.home}</a>
       <a class="public-nav-link" href="/">${L.about}</a>
-      <a class="public-nav-link" href="/blog">${L.blog}</a>
       <a class="public-nav-link" href="/">${L.practice}</a>
       <div class="nav-drop">
         <button class="public-nav-link" type="button" id="blog-nav-svc" aria-haspopup="true" aria-expanded="false">${L.services} ▾</button>
@@ -121,6 +111,7 @@ function blogHeader(firm, lang) {
           <a class="nav-drop-item" href="/#/web-app">${L.webApp}</a>
         </div>
       </div>
+      <a class="public-nav-link" href="/blog">${L.blog}</a>
       <a class="public-nav-link" href="/">${L.contact}</a>
     </nav>
     <div class="public-header-actions">
@@ -136,9 +127,9 @@ function blogHeader(firm, lang) {
     <nav class="drawer-nav">
       <a href="/">${L.home}</a>
       <a href="/">${L.about}</a>
-      <a href="/blog">${L.blog}</a>
       <a href="/">${L.practice}</a>
       <a href="/">${L.services}</a>
+      <a href="/blog">${L.blog}</a>
       <a href="/">${L.contact}</a>
       <a href="/#/web-app">${L.webApp}</a>
       <a href="/#/login">${L.clientSpace}</a>
@@ -161,24 +152,6 @@ function blogHeader(firm, lang) {
     var themeBtn=document.getElementById('blog-theme-btn');
     try{var saved=localStorage.getItem('cej-theme');if(saved){document.documentElement.dataset.theme=saved;}}catch(e){}
     if(themeBtn){themeBtn.addEventListener('click',function(){var cur=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=cur;try{localStorage.setItem('cej-theme',cur);}catch(e){}});}
-    /* Synchro langue avec le reste du site : la langue choisie est stockée
-       dans localStorage ('cej_lang'). Sans ?lang= explicite dans l'URL et si
-       la langue mémorisée diffère de celle rendue, on recharge avec le bon
-       paramètre pour que le menu suive la langue sélectionnée. */
-    try{
-      var hasLangParam=/[?&]lang=/.test(location.search);
-      var storedLang=localStorage.getItem('cej_lang');
-      var renderedLang=(document.documentElement.lang||'fr').slice(0,2);
-      if(!hasLangParam&&(storedLang==='fr'||storedLang==='en')&&storedLang!==renderedLang){
-        location.search=(location.search?location.search+'&':'?')+'lang='+storedLang;
-      }
-      /* Les liens FR/EN mémorisent aussi le choix pour le reste du site. */
-      Array.prototype.forEach.call(document.querySelectorAll('a[href*="lang="]'),function(a){
-        a.addEventListener('click',function(){
-          try{var m=a.getAttribute('href').match(/lang=(fr|en)/);if(m){localStorage.setItem('cej_lang',m[1]);}}catch(e){}
-        });
-      });
-    }catch(e){}
   })();
   </script>`;
 }
@@ -211,25 +184,11 @@ ${blogHeader(firm, lang)}
 
 async function publishedPosts() {
   const { rows } = await query(`
-    SELECT b.*, a.name AS ba_name, a.photo_filename AS ba_photo
-    FROM blog_posts b LEFT JOIN authors a ON a.id = b.author_id
+    SELECT b.*, u.first_name, u.last_name
+    FROM blog_posts b JOIN users u ON u.id = b.author_id
     WHERE b.status='published'
     ORDER BY b.published_at DESC LIMIT 100`);
   return rows;
-}
-
-/** Initiales pour le cercle de repli (ex. « Benoni Tshibamba » → « BT »). */
-function authorInitials(name) {
-  return String(name || '').trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
-}
-
-/** Byline d'article : photo ronde de l'auteur (ou initiales), sinon « Admin ». */
-function bylineHtml(p) {
-  if (!p.ba_name) return 'Admin';
-  const img = p.ba_photo
-    ? `<img class="byline-photo" src="/uploads/author-photos/${esc(p.ba_photo)}" alt="">`
-    : `<span class="byline-initials">${esc(authorInitials(p.ba_name))}</span>`;
-  return `<span class="byline">${img}<span>${esc(p.ba_name)}</span></span>`;
 }
 
 export function mountBlogPages(app) {
@@ -243,7 +202,7 @@ export function mountBlogPages(app) {
           ${p.cover_filename ? `<a href="/blog/${esc(p.slug)}"><img src="/uploads/blog-covers/${esc(p.cover_filename)}" alt="" loading="lazy"></a>` : ''}
           <div>
             <h2><a href="/blog/${esc(p.slug)}">${esc(p.title)}</a></h2>
-            <div class="blog-meta">${esc(fmtDate(p.published_at))} · ${bylineHtml(p)}</div>
+            <div class="blog-meta">${esc(fmtDate(p.published_at))} · ${esc(p.first_name)} ${esc(p.last_name)}</div>
             ${p.excerpt ? `<p class="blog-excerpt">${esc(p.excerpt)}</p>` : ''}
             <p><a class="blog-read" href="/blog/${esc(p.slug)}">Lire l'article →</a></p>
           </div>
@@ -265,8 +224,8 @@ export function mountBlogPages(app) {
     try {
       const firm = await firmInfo();
       const { rows } = await query(`
-        SELECT b.*, a.name AS ba_name, a.photo_filename AS ba_photo
-        FROM blog_posts b LEFT JOIN authors a ON a.id = b.author_id
+        SELECT b.*, u.first_name, u.last_name
+        FROM blog_posts b JOIN users u ON u.id = b.author_id
         WHERE b.slug=$1 AND b.status='published'`, [req.params.slug]);
       const p = rows[0];
       const base = baseUrl(req);
@@ -286,7 +245,7 @@ export function mountBlogPages(app) {
       const body = `
         <article class="blog-article">
           <h1>${esc(p.title)}</h1>
-          <div class="blog-meta">${esc(fmtDate(p.published_at))} · Par ${bylineHtml(p)} · ${esc(firm.name)}</div>
+          <div class="blog-meta">${esc(fmtDate(p.published_at))} · Par ${esc(p.first_name)} ${esc(p.last_name)} · ${esc(firm.name)}</div>
           ${p.cover_filename ? `<img class="blog-cover" src="/uploads/blog-covers/${esc(p.cover_filename)}" alt="${esc(p.title)}">` : ''}
           <div class="blog-body">${html}</div>
         </article>`;

@@ -1,11 +1,10 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import PDFDocument from 'pdfkit';
-import { query, withTransaction } from '../db/pool.js';
+import { query } from '../db/pool.js';
 import { requireAuth, requirePermission, HttpError } from '../middleware/auth.js';
 import { logAudit } from '../services/audit.js';
 import { notifyMany } from '../services/notify.js';
-import { loadCaseOr404, assertVisible } from './cases.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -85,85 +84,6 @@ async function loadInvoiceOr404(id) {
   return rows[0];
 }
 
-const toTimeLine = (e) => ({
-  id: e.id,
-  date: e.date,
-  hours: Number(e.hours),
-  rate: Number(e.rate),
-  amountCents: Math.round(Number(e.hours) * Number(e.rate) * 100),
-  description: e.description,
-  userName: e.first_name ? `${e.first_name} ${e.last_name}` : undefined,
-  invoiceId: e.invoice_id ?? null,
-});
-
-async function unbilledLines(caseId) {
-  const { rows } = await query(
-    `SELECT te.*, u.first_name, u.last_name FROM time_entries te
-     JOIN users u ON u.id = te.user_id
-     WHERE te.case_id = $1 AND te.invoice_id IS NULL
-     ORDER BY te.date ASC, te.id ASC`,
-    [caseId],
-  );
-  return rows.map(toTimeLine);
-}
-
-/**
- * GET /api/invoices/preview?case_id=N — aperçu des lignes de temps non facturées
- * d'un dossier, pour pré-remplir le formulaire de facture.
- */
-router.get('/preview', requirePermission('billing.create'), async (req, res, next) => {
-  try {
-    const caseId = z.coerce.number().int().positive().parse(req.query.case_id);
-    const c = await loadCaseOr404(caseId);
-    await assertVisible(req.user, c);
-    const lines = await unbilledLines(caseId);
-    res.json({
-      caseId,
-      lines,
-      count: lines.length,
-      totalCents: lines.reduce((s, l) => s + l.amountCents, 0),
-      totalHours: lines.reduce((s, l) => s + l.hours, 0),
-    });
-  } catch (err) {
-    next(err instanceof z.ZodError ? new HttpError(400, 'invalid_body', 'Paramètre case_id invalide.') : err);
-  }
-});
-
-/**
- * GET /api/invoices/billable?case_id=N — temps facturable d'un dossier, calculé
- * en direct depuis time_entries (aucun cache). Utilisé par le portail client :
- * total des heures, montant couru, ventilation facturé / non facturé.
- */
-router.get('/billable', requirePermission('billing.read'), async (req, res, next) => {
-  try {
-    const caseId = z.coerce.number().int().positive().parse(req.query.case_id);
-    const c = await loadCaseOr404(caseId);
-    await assertVisible(req.user, c);
-    const { rows } = await query(
-      `SELECT te.*, u.first_name, u.last_name FROM time_entries te
-       JOIN users u ON u.id = te.user_id
-       WHERE te.case_id = $1 ORDER BY te.date ASC, te.id ASC`,
-      [caseId],
-    );
-    const lines = rows.map(toTimeLine);
-    const billed = lines.filter((l) => l.invoiceId !== null);
-    const unbilled = lines.filter((l) => l.invoiceId === null);
-    const sum = (arr, f) => arr.reduce((s, l) => s + f(l), 0);
-    res.json({
-      caseId,
-      lines,
-      totalHours: sum(lines, (l) => l.hours),
-      totalCents: sum(lines, (l) => l.amountCents),
-      billedHours: sum(billed, (l) => l.hours),
-      billedCents: sum(billed, (l) => l.amountCents),
-      unbilledHours: sum(unbilled, (l) => l.hours),
-      unbilledCents: sum(unbilled, (l) => l.amountCents),
-    });
-  } catch (err) {
-    next(err instanceof z.ZodError ? new HttpError(400, 'invalid_body', 'Paramètre case_id invalide.') : err);
-  }
-});
-
 router.get('/:id', requirePermission('billing.read'), async (req, res, next) => {
   try {
     const row = await loadInvoiceOr404(req.params.id);
@@ -188,42 +108,14 @@ const invoiceSchema = z.object({
 router.post('/', requirePermission('billing.create'), async (req, res, next) => {
   try {
     const b = invoiceSchema.parse(req.body);
-    let clientId = b.clientId;
-    let amountCents = b.amountCents;
-    let billedEntryIds = [];
-
-    // Facturation au temps : si un dossier est précisé, les saisies de temps
-    // non facturées du dossier sont automatiquement reprises dans la facture.
-    if (b.caseId) {
-      const c = await loadCaseOr404(b.caseId);
-      await assertVisible(req.user, c);
-      clientId = c.client_id;
-      const lines = await unbilledLines(b.caseId);
-      if (lines.length) {
-        amountCents = lines.reduce((s, l) => s + l.amountCents, 0);
-        billedEntryIds = lines.map((l) => l.id);
-      }
-    }
-
-    const invoiceId = await withTransaction(async (tx) => {
-      const { rows } = await tx.query(
-        `INSERT INTO invoices (invoice_number, client_id, case_id, amount_cents, tax_cents, due_at, created_by, issued_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7, CURRENT_DATE) RETURNING id`,
-        [genInvoiceNumber(), clientId, b.caseId ?? null, amountCents, b.taxCents ?? 0, b.dueAt ?? null, req.user.id],
-      );
-      if (billedEntryIds.length) {
-        const placeholders = billedEntryIds.map((_, i) => `$${i + 2}`).join(',');
-        await tx.query(
-          `UPDATE time_entries SET invoice_id = $1, updated_at = now() WHERE id IN (${placeholders})`,
-          [rows[0].id, ...billedEntryIds],
-        );
-      }
-      return rows[0].id;
-    });
-
-    const created = await loadInvoiceOr404(invoiceId);
-    await logAudit({ userId: req.user.id, action: 'INVOICE_CREATED', resourceType: 'invoice', resourceId: created.id, newValues: { ...toInvoice(created), timeEntriesBilled: billedEntryIds.length }, ip: req.ip });
-    res.status(201).json({ ...toInvoice(created), timeEntriesBilled: billedEntryIds.length });
+    const { rows } = await query(
+      `INSERT INTO invoices (invoice_number, client_id, case_id, amount_cents, tax_cents, due_at, created_by, issued_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7, CURRENT_DATE) RETURNING id`,
+      [genInvoiceNumber(), b.clientId, b.caseId ?? null, b.amountCents, b.taxCents ?? 0, b.dueAt ?? null, req.user.id],
+    );
+    const created = await loadInvoiceOr404(rows[0].id);
+    await logAudit({ userId: req.user.id, action: 'INVOICE_CREATED', resourceType: 'invoice', resourceId: created.id, newValues: toInvoice(created), ip: req.ip });
+    res.status(201).json(toInvoice(created));
   } catch (err) {
     next(err instanceof z.ZodError ? new HttpError(400, 'invalid_body', err.issues[0].message) : err);
   }

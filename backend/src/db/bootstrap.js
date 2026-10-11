@@ -23,48 +23,6 @@ export async function ensureDatabase() {
   // Blog WYSIWYG : le markdown (content_md) est remplacé par du HTML nettoyé (content_html).
   // Le blog est tout nouveau (aucun article en production) : simple renommage de colonne.
   try { pool.exec('ALTER TABLE blog_posts RENAME COLUMN content_md TO content_html'); } catch (err) { if (!String(err?.message).includes('no such column')) throw err; }
-  // Auteurs d'articles (byline avec photo) : la table authors est créée par schema.sql.
-  // blog_posts.author_id pointe désormais vers authors(id) (auteur affiché) tandis que
-  // owner_id désigne l'utilisateur propriétaire (permissions d'édition).
-  // SQLite ne permet pas de modifier la contrainte FK : on reconstruit la table
-  // une seule fois (gardé par la présence de owner_id), comme pour la messagerie v2.
-  pool.exec(`CREATE TABLE IF NOT EXISTS authors (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    photo_filename TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  )`);
-  pool.exec(`INSERT INTO authors (name) SELECT 'Benoni Tshibamba'
-            WHERE NOT EXISTS (SELECT 1 FROM authors WHERE name = 'Benoni Tshibamba')`);
-  {
-    const cols = pool.prepare('PRAGMA table_info(blog_posts)').all().map((c) => c.name);
-    if (!cols.includes('owner_id')) {
-      pool.exec(`
-        CREATE TABLE blog_posts_new (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          slug TEXT NOT NULL UNIQUE,
-          title TEXT NOT NULL,
-          excerpt TEXT,
-          content_html TEXT NOT NULL DEFAULT '',
-          cover_filename TEXT,
-          cover_mime TEXT,
-          owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-          author_id INTEGER REFERENCES authors(id) ON DELETE SET NULL,
-          status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published')),
-          published_at TEXT,
-          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );
-        INSERT INTO blog_posts_new (id, slug, title, excerpt, content_html, cover_filename, cover_mime, owner_id, author_id, status, published_at, created_at, updated_at)
-          SELECT id, slug, title, excerpt, content_html, cover_filename, cover_mime, author_id,
-                 (SELECT a.id FROM authors a WHERE a.name = 'Benoni Tshibamba'),
-                 status, published_at, created_at, updated_at FROM blog_posts;
-        DROP TABLE blog_posts;
-        ALTER TABLE blog_posts_new RENAME TO blog_posts;
-        CREATE INDEX IF NOT EXISTS idx_blog_posts_status ON blog_posts(status, published_at DESC);
-      `);
-    }
-  }
   // Visibilité des sections de la page d'accueil (personnalisation white-label).
   for (const col of ['show_hero', 'show_posts', 'show_features', 'show_testimonials', 'show_contact', 'show_about', 'show_practice_areas']) {
     try { pool.exec(`ALTER TABLE site_settings ADD COLUMN ${col} INTEGER NOT NULL DEFAULT 1`); } catch (err) { if (!String(err?.message).includes('duplicate column name')) throw err; }
@@ -77,9 +35,6 @@ export async function ensureDatabase() {
   try { pool.exec(`ALTER TABLE site_settings ADD COLUMN hero_images TEXT NOT NULL DEFAULT '[]'`); } catch (err) { if (!String(err?.message).includes('duplicate column name')) throw err; }
   // Photo de profil des utilisateurs.
   try { pool.exec('ALTER TABLE users ADD COLUMN avatar_filename TEXT'); } catch (err) { if (!String(err?.message).includes('duplicate column name')) throw err; }
-  // Authentification à deux facteurs (TOTP) : secret + drapeau d'activation.
-  try { pool.exec('ALTER TABLE users ADD COLUMN totp_secret TEXT'); } catch (err) { if (!String(err?.message).includes('duplicate column name')) throw err; }
-  try { pool.exec('ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0'); } catch (err) { if (!String(err?.message).includes('duplicate column name')) throw err; }
   // Adresse structurée du cabinet (carte publique sur la page d'accueil).
   // Remplace le champ unique `address` (conservé pour compatibilité).
   // Valeurs par défaut africaines (Kinshasa, RDC) — modifiables dans Personnalisation.
@@ -99,9 +54,6 @@ export async function ensureDatabase() {
     pool.exec(`UPDATE site_settings SET address_province = 'Kinshasa' WHERE address_province = 'Québec'`);
     pool.exec(`UPDATE site_settings SET address_country = 'République démocratique du Congo' WHERE address_country = 'Canada'`);
     pool.exec(`UPDATE site_settings SET contact_email = 'tshibambabenoni@gmail.com' WHERE contact_email = 'contact@cabinet-elite.example'`);
-    // Téléphone public du cabinet : rempli uniquement s'il est encore vide
-    // (l'admin peut le personnaliser dans Personnalisation — jamais écrasé).
-    pool.exec(`UPDATE site_settings SET contact_phone = '+1 (438) 454-3171' WHERE contact_phone = ''`);
   } catch (err) { /* bases sans ces colonnes — ignoré */ }
   // Reprend l'ancienne adresse personnalisée comme rue (si elle diffère du défaut historique).
   try {

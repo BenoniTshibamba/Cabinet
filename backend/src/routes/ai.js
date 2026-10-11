@@ -96,24 +96,7 @@ router.post('/ask', requirePermission('ai.ask'), async (req, res, next) => {
       .sort((a, b2) => b2.score - a.score)
       .slice(0, 8);
 
-    // Garde-fou de pertinence : sans seuil, une question sans rapport (ex. une
-    // simple salutation) cite quand même les « meilleurs » extraits, même s'ils
-    // n'ont rien à voir (ex. un PDF sans rapport avec le droit). Sous ce seuil,
-    // on répond honnêtement qu'aucun document pertinent n'a été trouvé plutôt
-    // que de citer un document hors sujet.
-    const MIN_SCORE = 0.3;
-    const relevant = ranked.filter((x) => x.score >= MIN_SCORE);
-    if (!relevant.length) {
-      return res.json({
-        answer: msg(
-          'Je n’ai trouvé aucun document pertinent pour cette question dans les dossiers accessibles.',
-          'I found no relevant document for this question in the accessible cases.',
-        ),
-        sources: [],
-      });
-    }
-
-    const context = relevant.map((x, i) =>
+    const context = ranked.map((x, i) =>
       `SOURCE ${i + 1}\nDocument: ${x.original_name}\nDossier: ${x.case_number} — ${x.title}\nExtrait:\n${x.content}`,
     ).join('\n\n');
 
@@ -138,7 +121,7 @@ CONTEXTE :\n${context}`;
 
     res.json({
       answer,
-      sources: relevant.map((x, i) => ({
+      sources: ranked.map((x, i) => ({
         number: i + 1,
         documentId: x.document_id,
         name: x.original_name,

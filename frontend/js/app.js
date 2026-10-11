@@ -61,10 +61,6 @@ const PATHS = {
   listNumbered: 'M10 6h10M10 12h10M10 18h10M4 5.5 6 6v1M4 11.5 6 12v1M4 17.5 6 18v1',
   quote: 'M8 6C5 8 4 10 4 13v5h6v-6H6.5C6.5 10 7 9 8 8.5zM18 6c-3 2-4 4-4 7v5h6v-6h-3.5c0-2 .5-3 1.5-3.5z',
   linkIcon: 'M10 14a4 4 0 0 0 6 0l2.5-2.5a4 4 0 0 0-5.7-5.7L11.5 7M14 10a4 4 0 0 0-6 0l-2.5 2.5a4 4 0 0 0 5.7 5.7L12.5 17',
-  unlinkIcon: 'M10 14a4 4 0 0 0 6 0l2.5-2.5a4 4 0 0 0-5.7-5.7L11.5 7M14 10a4 4 0 0 0-6 0l-2.5 2.5a4 4 0 0 0 5.7 5.7L12.5 17M4 4l16 16',
-  indentInc: 'M3 6h11M3 12h11M3 18h11M15 9l5 3-5 3',
-  indentDec: 'M10 6h11M10 12h11M10 18h11M8 9 3 12l5 3',
-  hrIcon: 'M4 12h16M7 8v8M17 8v8',
   imageIcon: 'M4 5h16v14H4zM4 16l4.5-4.5 3.5 3.5 3-3L20 17M9.5 10a1.5 1.5 0 1 0 0-.01',
   clearFormat: 'M6 20 12 4l6 16M8.5 14h7M4 4l16 16',
 };
@@ -206,15 +202,6 @@ const api = {
   login: (email, password) => request('/auth/login', { method: 'POST', body: { email, password }, retry: false }),
   me: () => request('/auth/me'),
   changePassword: (currentPassword, newPassword) => request('/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } }),
-  forgotPassword: (email) => request('/auth/forgot-password', { method: 'POST', body: { email }, retry: false }),
-  resetPassword: (token, newPassword) => request('/auth/reset-password', { method: 'POST', body: { token, newPassword }, retry: false }),
-  twofaStatus: () => request('/auth/2fa/status'),
-  twofaSetup: () => request('/auth/2fa/setup', { method: 'POST' }),
-  twofaVerify: (code) => request('/auth/2fa/verify', { method: 'POST', body: { code } }),
-  twofaDisable: (password) => request('/auth/2fa/disable', { method: 'POST', body: { password } }),
-  twofaLogin: (tempToken, code) => request('/auth/2fa/login', { method: 'POST', body: { tempToken, code }, retry: false }),
-  oauthGoogleStatus: () => request('/auth/oauth/google/status', { retry: false }),
-  oauthGoogleComplete: (code) => request('/auth/oauth/google/complete', { method: 'POST', body: { code }, retry: false }),
 
   dashboard: () => request('/dashboard'),
 
@@ -230,10 +217,6 @@ const api = {
   updateCase: (id, body) => request(`/cases/${id}`, { method: 'PATCH', body }),
   caseNotes: (id) => request(`/cases/${id}/notes`),
   addCaseNote: (id, content) => request(`/cases/${id}/notes`, { method: 'POST', body: { content } }),
-  caseShares: (caseId) => request(`/cases/${caseId}/shares`),
-  shareCase: (caseId, lawyerId) => request(`/cases/${caseId}/shares`, { method: 'POST', body: { lawyerId } }),
-  unshareCase: (caseId, lawyerId) => request(`/cases/${caseId}/shares/${lawyerId}`, { method: 'DELETE' }),
-  lawyers: () => request('/users'),
 
   documents: (caseId) => request(`/cases/${caseId}/documents`),
   uploadDocument: (caseId, file) => {
@@ -245,8 +228,6 @@ const api = {
 
   invoices: (params = {}) => request(`/invoices?${new URLSearchParams(params)}`),
   createInvoice: (body) => request('/invoices', { method: 'POST', body }),
-  invoicePreview: (caseId) => request(`/invoices/preview?case_id=${encodeURIComponent(caseId)}`),
-  caseBillable: (caseId) => request(`/invoices/billable?case_id=${encodeURIComponent(caseId)}`),
   setInvoiceStatus: (id, status) => request(`/invoices/${id}/status`, { method: 'PATCH', body: { status } }),
 
   notifications: () => request('/notifications'),
@@ -257,13 +238,6 @@ const api = {
   users: () => request('/users'),
   createUser: (body) => request('/users', { method: 'POST', body }),
   updateUser: (id, body) => request(`/users/${id}`, { method: 'PATCH', body }),
-  deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
-  uploadAvatar: (file) => {
-    const form = new FormData();
-    form.append('avatar', file);
-    return request('/users/me/avatar', { method: 'POST', body: form, isForm: true });
-  },
-  removeAvatar: () => request('/users/me/avatar', { method: 'DELETE' }),
 
   auditLogs: (params = {}) => request(`/audit-logs?${new URLSearchParams(params)}`),
 
@@ -297,8 +271,6 @@ const api = {
   updatePracticeArea: (id, body) => request(`/practice-areas/${id}`, { method: 'PUT', body }),
   deletePracticeArea: (id) => request(`/practice-areas/${id}`, { method: 'DELETE' }),
   sendContact: (body) => request('/contact', { method: 'POST', body }),
-  contactMessages: () => request('/contact'),
-  markContactRead: (id, isRead) => request(`/contact/${id}`, { method: 'PATCH', body: { isRead } }),
   testimonials: () => request('/testimonials'),
   createTestimonial: (body, photoFile) => {
     if (!photoFile) return request('/testimonials', { method: 'POST', body });
@@ -360,7 +332,7 @@ const api = {
   messageUsers: () => request('/social/messages/users'),
   messages: (userId) => request(`/social/messages/${userId}`),
   sendMessage: (recipientId, content, attachmentDocumentId) => request('/social/messages', { method: 'POST', body: { recipientId, content, ...(attachmentDocumentId ? { attachmentDocumentId } : {}) } }),
-  msgUnreadCount: () => request('/social/messages/unread-count'),
+  unreadCount: () => request('/social/messages/unread-count'),
   msgSearch: (q) => request(`/social/messages/search?q=${encodeURIComponent(q)}`),
   sendTyping: (userId) => request(`/social/messages/typing/${userId}`, { method: 'POST' }).catch(() => null),
   getTyping: (userId) => request(`/social/messages/typing/${userId}`).catch(() => ({ typing: false })),
@@ -377,11 +349,8 @@ const api = {
   convGetTyping: (id) => request(`/social/conversations/${id}/typing`).catch(() => ({ typing: [] })),
   aiStatus: () => request('/ai/status'),
   askAI: (question, caseId, lang) => request('/ai/ask', { method: 'POST', body: { question, ...(caseId ? { caseId } : {}), ...(lang ? { lang } : {}) } }),
-  publicChat: (question, lang) => request('/public/chat', { method: 'POST', body: { question, lang } }),
   indexDocument: (id) => request(`/ai/index-document/${id}`, { method: 'POST' }),
   registerRequest: (body) => request('/registration-requests', { method: 'POST', body }),
-  registrationRequests: () => request('/registration-requests'),
-  reviewRegistrationRequest: (id, body) => request(`/registration-requests/${id}`, { method: 'PATCH', body }),
   siteSettings: () => request('/site-settings'),
   updateSiteSettings: (body) => request('/site-settings', { method: 'PUT', body }),
   uploadLogo: (file) => {
@@ -408,22 +377,6 @@ const api = {
     return request(`/blog/${id}`, { method: 'PUT', body: form, isForm: true });
   },
   deleteBlogPost: (id) => request(`/blog/${id}`, { method: 'DELETE' }),
-  authors: () => request('/blog/authors'),
-  createAuthor: (name, photoFile) => {
-    const form = new FormData();
-    form.append('name', name);
-    if (photoFile) form.append('photo', photoFile);
-    return request('/blog/authors', { method: 'POST', body: form, isForm: true });
-  },
-  updateAuthor: (id, name, photoFile, removePhoto = false) => {
-    const form = new FormData();
-    if (name != null) form.append('name', name);
-    if (photoFile) form.append('photo', photoFile);
-    if (removePhoto) form.append('removePhoto', 'true');
-    return request(`/blog/authors/${id}`, { method: 'PUT', body: form, isForm: true });
-  },
-  deleteAuthor: (id) => request(`/blog/authors/${id}`, { method: 'DELETE' }),
-  generateBlogPost: (body) => request('/blog/ai-generate', { method: 'POST', body }),
   uploadBlogImage: (file) => {
     const form = new FormData();
     form.append('image', file);
@@ -598,12 +551,7 @@ function aboutPhotoUrl() {
  */
 function addressLines(s) {
   const street = (s.addressStreet || '').trim();
-  const city = (s.addressCity || '').trim();
-  const prov = (s.addressProvince || '').trim();
-  // Évite "Kinshasa Kinshasa" quand ville et province sont identiques.
-  const cityProv = (prov && prov.toLowerCase() !== city.toLowerCase())
-    ? `${city} ${prov}`.trim()
-    : city;
+  const cityProv = [s.addressCity, s.addressProvince].map((x) => (x || '').trim()).filter(Boolean).join(' ');
   const postal = (s.addressPostal || '').trim();
   const line2 = [cityProv, postal].filter(Boolean).join('  ');
   const country = (s.addressCountry || '').trim();
@@ -657,20 +605,10 @@ function parseHash() {
   return { name: parts[0] || 'home', id: parts[1] };
 }
 
-/** Paramètres de requête éventuels dans le hash (ex. #/reset-password?token=…). */
-function hashQuery() {
-  const idx = location.hash.indexOf('?');
-  if (idx < 0) return {};
-  return Object.fromEntries(new URLSearchParams(location.hash.slice(idx + 1)));
-}
-
 let currentUser = null;
 
 async function route() {
-  const { name: rawName, id: rawId } = parseHash();
-  const name = rawName.split('?')[0];
-  const id = rawId ? rawId.split('?')[0] : rawId;
-  const q = hashQuery();
+  const { name, id } = parseHash();
   clearMsgPoll();
   clearTimerTick();
 
@@ -678,16 +616,6 @@ async function route() {
   // rien et permet d'ouvrir directement la page de connexion via #/login.
   if (name === 'login') {
     return renderLogin();
-  }
-
-  // Réinitialisation du mot de passe (lien reçu par courriel).
-  if (name === 'reset-password') {
-    return renderResetPassword(q.token);
-  }
-
-  // Retour de la connexion Google (échange du code contre une session).
-  if (name === 'oauth' && id === 'callback') {
-    return handleOauthCallback(q.code);
   }
 
   // Page publique "L'application" (vitrine du logiciel), accessible à tous.
@@ -753,7 +681,6 @@ async function route() {
     audit: () => viewAudit(main),
     customize: () => viewCustomize(main),
     'contact-messages': () => viewContactMessages(main),
-    'access-requests': () => viewAccessRequests(main),
   };
   (views[name] ?? views.dashboard)();
   highlightNav(name);
@@ -833,7 +760,6 @@ function publicChrome(loggedUser, s, areas, contactEmail, contactPhone, addressT
   const navMain = [
     h('button', { class: 'public-nav-link', type: 'button', onclick: () => scrollToId('accueil') }, t('navHome')),
     h('button', { class: 'public-nav-link', type: 'button', onclick: () => scrollToId('apropos') }, t('navAbout')),
-    h('a', { class: 'public-nav-link', href: '/blog' }, t('navBlog')),
     navDropdown(t('navPractice'), areas.length
       ? areas.map((a) => dropLink(a.title, () => scrollToId('domaines')))
       : [dropLink(t('navPractice'), () => scrollToId('domaines'))]),
@@ -842,6 +768,7 @@ function publicChrome(loggedUser, s, areas, contactEmail, contactPhone, addressT
       dropLink(t('svcClientSpace'), () => { location.hash = '#/login'; }),
       dropLink(t('svcWebApp'), () => { location.hash = '#/web-app'; }),
     ]),
+    h('a', { class: 'public-nav-link', href: '/blog' }, t('navBlog')),
     h('button', { class: 'public-nav-link', type: 'button', onclick: () => scrollToId('contact') }, t('navContact')),
   ];
 
@@ -861,7 +788,7 @@ function publicChrome(loggedUser, s, areas, contactEmail, contactPhone, addressT
       ]
     : [
         h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { location.hash = '#/login'; } }, t('seConnecter')),
-        h('button', { class: 'btn btn-primary login-top-btn', type: 'button', onclick: openRegistrationModal }, t('demanderAcces')),
+        h('button', { class: 'btn btn-primary login-top-btn', type: 'button', onclick: openRegistrationModal }, t('landDemo')),
       ];
 
   // Tiroir mobile (fond navy, liens centrés, contact + langue en bas).
@@ -876,9 +803,9 @@ function publicChrome(loggedUser, s, areas, contactEmail, contactPhone, addressT
     h('nav', { class: 'drawer-nav' },
       h('button', { type: 'button', onclick: goDrawer(() => scrollToId('accueil')) }, t('navHome')),
       h('button', { type: 'button', onclick: goDrawer(() => scrollToId('apropos')) }, t('navAbout')),
-      h('a', { href: '/blog', onclick: closeDrawer }, t('navBlog')),
       h('button', { type: 'button', onclick: goDrawer(() => scrollToId('domaines')) }, t('navPractice')),
       h('button', { type: 'button', onclick: goDrawer(() => scrollToId('contact')) }, t('svcConsultation')),
+      h('a', { href: '/blog', onclick: closeDrawer }, t('navBlog')),
       h('button', { type: 'button', onclick: goDrawer(() => scrollToId('contact')) }, t('navContact')),
       h('button', { type: 'button', onclick: goDrawer(() => { location.hash = '#/web-app'; }) }, t('svcWebApp')),
       h('button', { type: 'button', onclick: goDrawer(() => { location.hash = '#/login'; }) }, t('seConnecter')),
@@ -904,8 +831,8 @@ function publicChrome(loggedUser, s, areas, contactEmail, contactPhone, addressT
   const footerNav = [
     h('button', { class: 'link-btn', type: 'button', onclick: () => scrollToId('accueil') }, t('navHome')),
     h('button', { class: 'link-btn', type: 'button', onclick: () => scrollToId('apropos') }, t('navAbout')),
-    h('a', { class: 'link-btn', href: '/blog' }, t('navBlog')),
     h('button', { class: 'link-btn', type: 'button', onclick: () => scrollToId('domaines') }, t('navPractice')),
+    h('a', { class: 'link-btn', href: '/blog' }, t('navBlog')),
     h('a', { class: 'link-btn', href: '#/web-app' }, t('svcWebApp')),
     h('button', { class: 'link-btn', type: 'button', onclick: () => scrollToId('contact') }, t('navContact')),
   ];
@@ -924,7 +851,7 @@ function publicChrome(loggedUser, s, areas, contactEmail, contactPhone, addressT
         h('p', { class: 'muted' }, addressText),
         h('p', { class: 'muted' }, `${contactPhone} · ${contactEmail}`),
         loggedUser
-          ? h('button', { class: 'link-btn', type: 'button', onclick: () => { location.hash = '#/dashboard'; } }, t('monEspace'))
+          ? h('button', { class: 'link-btn', type: 'button', onclick: logout }, t('seDeconnecter'))
           : h('button', { class: 'link-btn', type: 'button', onclick: () => { location.hash = '#/login'; } }, t('seConnecter')),
       )
     ),
@@ -1050,7 +977,7 @@ async function renderPublicHome(loggedUser = null) {
   const hero = heroSection;
   if (heroImgs.length > 1) startHeroSlideshow(heroSection);
 
-  const aboutPhoto = aboutPhotoUrl() ? h('div', { class: 'about-media' }, h('img', { class: 'about-photo', src: aboutPhotoUrl(), alt: '' })) : null;
+  const aboutPhoto = aboutPhotoUrl() ? h('img', { class: 'about-photo', src: aboutPhotoUrl(), alt: '' }) : null;
   const aboutSection = h('section', { class: 'public-section', id: 'apropos' },
     h('div', { class: 'public-section-head' },
       h('div', null,
@@ -1063,14 +990,6 @@ async function renderPublicHome(loggedUser = null) {
       h('div', { class: 'about-body' },
         h('h3', null, s.aboutTitle || firmName()),
         h('p', null, s.aboutText || t('landAboutDefault')),
-        areas.length ? h('p', { class: 'about-areas-label' }, t('aboutAreasLabel')) : null,
-        areas.length ? h('div', { class: 'about-chip-row' },
-          ...areas.slice(0, 6).map((a) => h('button', { type: 'button', class: 'about-chip', onclick: () => scrollToId('domaines') }, a.title))
-        ) : null,
-        h('div', { class: 'about-cta-row' },
-          h('button', { class: 'btn btn-primary', type: 'button', onclick: () => scrollToId('contact') }, t('aboutCtaContact')),
-          h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => scrollToId('domaines') }, t('aboutCtaAreas')),
-        ),
       ),
     ),
     stats.length ? h('dl', { class: 'stats-band' },
@@ -1128,7 +1047,6 @@ async function renderPublicHome(loggedUser = null) {
         h('div', { class: 'blog-preview-body' },
           h('p', { class: 'muted blog-preview-date' }, fmtDate(p.publishedAt)),
           h('h3', null, h('a', { href: `/blog/${p.slug}` }, p.title)),
-          h('p', { class: 'blog-preview-byline' }, authorBylineEl(p.author)),
           p.excerpt ? h('p', { class: 'muted' }, p.excerpt) : null,
           h('a', { class: 'link-btn', href: `/blog/${p.slug}` }, t('landBlogReadMore')),
         ))))
@@ -1275,8 +1193,8 @@ async function renderWebAppPage(loggedUser = null) {
 
   const ctaBand = h('section', { class: 'public-cta' },
     h('div', { class: 'public-cta-inner' },
-      h('h2', null, s.ctaTitle || t('webAppCtaTitle')),
-      h('p', null, s.ctaText || t('webAppCtaText')),
+      h('h2', null, s.ctaTitle || t('landCtaTitle')),
+      h('p', null, s.ctaText || t('landCtaText')),
       h('button', { class: 'btn btn-primary btn-large', type: 'button', onclick: openRegistrationModal }, s.ctaButton || t('landDemo')),
     )
   );
@@ -1303,51 +1221,6 @@ function renderLogin() {
   const errorBox = h('p', { class: 'form-error', hidden: true });
   const submitBtn = h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, t('seConnecter'));
   const registerBtn = h('button', { class: 'btn btn-link btn-block', type: 'button', onclick: () => openRegistrationModal() }, t('demanderAcces'));
-  const forgotBtn = h('button', { class: 'btn btn-link btn-block', type: 'button', onclick: () => openForgotPasswordModal() }, t('forgotPassword'));
-  const googleWrap = h('div');
-
-  function completeLogin(body) {
-    setSession({ accessToken: body.accessToken, refreshToken: body.refreshToken, user: body.user });
-    // Direction explicite vers le tableau de bord : rester sur #/home donnait
-    // l'impression que la connexion n'avait rien fait, car c'est la même page
-    // publique (juste avec un bouton « Mon espace » en plus, facile à manquer).
-    location.hash = '#/dashboard';
-    if (location.hash === '#/dashboard') route();
-  }
-
-  // Seconde étape : code 2FA (après mot de passe ou Google).
-  function renderTwofaStep(tempToken) {
-    const code = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', required: true, maxlength: 10, placeholder: '123456' });
-    const err = h('p', { class: 'form-error', hidden: true });
-    const btn = h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, t('twofaVerify'));
-    const form = h('form', {
-      class: 'login-form',
-      onsubmit: async (e) => {
-        e.preventDefault();
-        err.hidden = true;
-        btn.disabled = true;
-        try {
-          const body = await api.twofaLogin(tempToken, code.value.trim());
-          completeLogin(body);
-        } catch (e2) {
-          err.textContent = errorMessage(e2);
-          err.hidden = false;
-        } finally {
-          btn.disabled = false;
-        }
-      },
-    }, h('p', { class: 'auth-tagline' }, t('twofaLoginIntro')), field(t('twofaCode'), code), err, btn);
-    clear(root).append(
-      h('div', { class: 'auth-screen' },
-        h('div', { class: 'auth-card' },
-          h('div', { class: 'brand' }, h('span', { class: 'brand-mark' }, '⚖'), h('span', { class: 'brand-name' }, t('brand'))),
-          h('p', { class: 'auth-tagline' }, t('twofaLoginTitle')),
-          form,
-        ),
-      ),
-    );
-    code.focus();
-  }
 
   const form = h(
     'form',
@@ -1360,11 +1233,12 @@ function renderLogin() {
         submitBtn.textContent = t('authConnecting');
         try {
           const body = await api.login(email.value.trim(), password.value);
-          if (body.twoFactorRequired) {
-            renderTwofaStep(body.tempToken);
-            return;
-          }
-          completeLogin(body);
+          setSession({ accessToken: body.accessToken, refreshToken: body.refreshToken, user: body.user });
+          // Direction explicite vers le tableau de bord : rester sur #/home donnait
+          // l'impression que la connexion n'avait rien fait, car c'est la même page
+          // publique (juste avec un bouton « Mon espace » en plus, facile à manquer).
+          location.hash = '#/dashboard';
+          if (location.hash === '#/dashboard') await route();
         } catch (err) {
           errorBox.textContent = errorMessage(err);
           errorBox.hidden = false;
@@ -1378,8 +1252,6 @@ function renderLogin() {
     field(t('authPassword'), password),
     errorBox,
     submitBtn,
-    forgotBtn,
-    googleWrap,
     registerBtn,
   );
 
@@ -1397,125 +1269,6 @@ function renderLogin() {
     ),
   );
   email.focus();
-
-  // Bouton Google : affiché seulement si l'OAuth est configuré côté serveur.
-  api.oauthGoogleStatus()
-    .then((s) => {
-      if (s?.enabled) {
-        googleWrap.append(
-          h('button', { class: 'btn btn-secondary btn-block', type: 'button', onclick: () => { location.href = '/api/auth/oauth/google'; } },
-            h('span', { 'aria-hidden': 'true' }, 'G '), t('googleLogin')),
-        );
-      }
-    })
-    .catch(() => { /* OAuth indisponible : on n'affiche rien */ });
-
-  // Retour du callback Google avec 2FA : on affiche directement l'étape du code.
-  const q = hashQuery();
-  if (q.twofa) {
-    history.replaceState(null, '', '#/login');
-    renderTwofaStep(q.twofa);
-  }
-}
-
-/** Modale « mot de passe oublié » : demande l'email, réponse toujours générique. */
-function openForgotPasswordModal() {
-  const f = { email: h('input', { type: 'email', required: true, autocomplete: 'email' }) };
-  const errorBox = h('p', { class: 'form-error', hidden: true });
-  const okBox = h('p', { class: 'form-ok', hidden: true });
-  const sendBtn = h('button', { class: 'btn btn-primary', type: 'submit' }, t('forgotSend'));
-  const form = h('form', {
-    class: 'stacked-form',
-    onsubmit: async (e) => {
-      e.preventDefault();
-      errorBox.hidden = true;
-      okBox.hidden = true;
-      sendBtn.disabled = true;
-      try {
-        await api.forgotPassword(f.email.value.trim());
-        okBox.textContent = t('forgotSent');
-        okBox.hidden = false;
-        f.email.value = '';
-      } catch (err) {
-        errorBox.textContent = errorMessage(err);
-        errorBox.hidden = false;
-      } finally {
-        sendBtn.disabled = false;
-      }
-    },
-  },
-    h('p', { class: 'muted' }, t('forgotIntro')),
-    field(t('authEmail'), f.email),
-    errorBox,
-    okBox,
-    sendBtn,
-  );
-  openModal(t('forgotTitle'), form);
-}
-
-/** Page de réinitialisation (lien reçu par courriel : #/reset-password?token=…). */
-function renderResetPassword(token) {
-  document.title = t('resetTitle');
-  const pwd = h('input', { type: 'password', required: true, minlength: 10, autocomplete: 'new-password', 'aria-describedby': 'pwd-reset-hint' });
-  const errorBox = h('p', { class: 'form-error', hidden: true });
-  const submitBtn = h('button', { class: 'btn btn-primary btn-block', type: 'submit' }, t('resetSubmit'));
-  const body = token
-    ? h('form', {
-        class: 'login-form',
-        onsubmit: async (e) => {
-          e.preventDefault();
-          errorBox.hidden = true;
-          submitBtn.disabled = true;
-          try {
-            await api.resetPassword(token, pwd.value);
-            toast(t('resetDone'));
-            location.hash = '#/login';
-          } catch (err) {
-            errorBox.textContent = errorMessage(err);
-            errorBox.hidden = false;
-          } finally {
-            submitBtn.disabled = false;
-          }
-        },
-      },
-        h('label', { class: 'field' }, h('span', null, t('resetNew')), pwd, h('small', { class: 'muted', id: 'pwd-reset-hint' }, t('pwdRule'))),
-        errorBox,
-        submitBtn)
-    : h('p', { class: 'form-error' }, t('errGeneric'));
-  clear(root).append(
-    h('div', { class: 'auth-screen' },
-      h('div', { class: 'auth-card' },
-        h('div', { class: 'brand' }, h('span', { class: 'brand-mark' }, '⚖'), h('span', { class: 'brand-name' }, t('brand'))),
-        h('p', { class: 'auth-tagline' }, t('resetTitle')),
-        body,
-      ),
-    ),
-  );
-  pwd?.focus?.();
-}
-
-/** Retour du callback Google : échange le code contre une session. */
-async function handleOauthCallback(code) {
-  document.title = t('authTitle');
-  clear(root).append(
-    h('div', { class: 'auth-screen' },
-      h('div', { class: 'auth-card' }, h('p', { class: 'auth-tagline' }, t('authConnecting')))),
-  );
-  history.replaceState(null, '', '#/login');
-  if (!code) {
-    location.hash = '#/login';
-    return;
-  }
-  try {
-    const body = await api.oauthGoogleComplete(code);
-    setSession({ accessToken: body.accessToken, refreshToken: body.refreshToken, user: body.user });
-    location.hash = '#/dashboard';
-    if (location.hash === '#/dashboard') await route();
-  } catch {
-    location.hash = '#/login';
-    await route();
-    toast(t('errGeneric'), 'error');
-  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1528,7 +1281,6 @@ const NAV = [
   { key: 'ai', label: t('navAI'), icon: 'search', perm: 'ai.ask', hideFor: ['CLIENT'] },
   { key: 'messages', label: t('navMessages'), icon: 'messages', perm: 'messages.read' },
   { key: 'contact-messages', label: t('navContactMessages'), icon: 'bell', perm: 'contact.read' },
-  { key: 'access-requests', label: t('navAccessRequests'), icon: 'lock', perm: 'users.read' },
   { key: 'dashboard', label: t('navDashboard'), icon: 'dashboard', perm: 'dashboard.read' },
   { key: 'clients', label: t('navClients'), icon: 'clients', perm: 'clients.read' },
   { key: 'cases', label: t('navCases'), icon: 'cases', perm: 'cases.read', clientLabel: t('navMyCases') },
@@ -1620,7 +1372,6 @@ function renderShell(perms) {
           h('button', { class: 'avatar-btn', type: 'button', 'aria-label': t('profileTitle'), title: t('profileTitle'), onclick: openProfileModal }, userAvatar(currentUser)),
           h('div', { class: 'sidebar-user-info' }, h('strong', { id: 'user-name' }, `${currentUser.firstName} ${currentUser.lastName}`), h('span', { id: 'user-role' }, ROLE_LABEL()[currentUser.role] ?? currentUser.role)),
           h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('pwdChange'), title: t('pwdChange'), onclick: openChangePasswordModal }, icon('lock')),
-          h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('twofaTitle'), title: t('twofaTitle'), onclick: openTwoFactorModal }, icon('shield')),
           h('button', { class: 'icon-btn', type: 'button', 'aria-label': t('seDeconnecter'), onclick: logout }, icon('logout')),
         ),
         h('div', { class: 'sidebar-credit' }, ...bb24Credit()),
@@ -1688,14 +1439,6 @@ async function refreshUnreadBadge() {
   }
 }
 
-/** Destination d'une notification selon son type : la page utile plutôt que le tableau de bord. */
-function notifHref(n) {
-  if (n.type === 'REGISTRATION_REQUEST') return '#/access-requests';
-  if (n.type === 'CONTACT_MESSAGE') return '#/contact-messages';
-  if (n.caseId) return `#/cases/${n.caseId}`;
-  return '#/dashboard';
-}
-
 async function toggleNotifPanel() {
   const panel = document.getElementById('notif-panel');
   panel.hidden = !panel.hidden;
@@ -1719,7 +1462,7 @@ async function toggleNotifPanel() {
         'a',
         {
           class: `notif-item${n.isRead ? '' : ' unread'}`,
-          href: notifHref(n),
+          href: n.caseId ? `#/cases/${n.caseId}` : '#/dashboard',
           onclick: async () => { if (!n.isRead) { await guarded(() => api.markNotificationRead(n.id)); refreshUnreadBadge(); } panel.hidden = true; },
         },
         h('span', { class: 'notif-title' }, n.title),
@@ -1764,110 +1507,6 @@ function openChangePasswordModal() {  const f = {
     h('button', { class: 'btn btn-primary', type: 'submit' }, t('pwdChange')),
   );
   const close = openModal(t('pwdChange'), form);
-}
-
-/** Modale « Sécurité » : activation / désactivation de l'authentification à deux facteurs (TOTP). */
-async function openTwoFactorModal() {
-  const wrap = h('div', { class: 'stacked-form' }, h('p', { class: 'loading' }, t('loading')));
-  const close = openModal(t('twofaTitle'), wrap);
-  const errBox = h('p', { class: 'form-error', hidden: true });
-
-  function showError(err) {
-    errBox.textContent = errorMessage(err);
-    errBox.hidden = false;
-  }
-
-  async function render() {
-    clear(wrap);
-    wrap.append(errBox);
-    errBox.hidden = true;
-    let status;
-    try {
-      status = await api.twofaStatus();
-    } catch (err) {
-      showError(err);
-      return;
-    }
-    wrap.append(h('p', { class: 'muted' }, t('twofaIntro')));
-    if (status?.enabled) {
-      wrap.append(
-        h('p', { class: 'form-ok' }, t('twofaStatusOn')),
-        h('button', { class: 'btn btn-secondary', type: 'button', onclick: () => renderDisable() }, t('twofaDisable')),
-      );
-      return;
-    }
-    wrap.append(
-      h('p', { class: 'muted' }, t('twofaStatusOff')),
-      h('button', { class: 'btn btn-primary', type: 'button', onclick: async () => {
-        try {
-          const setup = await api.twofaSetup();
-          renderVerify(setup);
-        } catch (err) { showError(err); }
-      } }, t('twofaSetup')),
-    );
-  }
-
-  function renderVerify(setup) {
-    const code = h('input', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', required: true, maxlength: 10, placeholder: '123456' });
-    const btn = h('button', { class: 'btn btn-primary', type: 'submit' }, t('twofaVerify'));
-    const form = h('form', {
-      class: 'stacked-form',
-      onsubmit: async (e) => {
-        e.preventDefault();
-        errBox.hidden = true;
-        btn.disabled = true;
-        try {
-          await api.twofaVerify(code.value.trim());
-          toast(t('twofaEnabled'));
-          render();
-        } catch (err) {
-          showError(err);
-        } finally {
-          btn.disabled = false;
-        }
-      },
-    },
-      h('p', { class: 'muted' }, t('twofaScan')),
-      h('div', { style: 'text-align:center' }, h('img', { src: setup.qrDataUrl, alt: 'QR code', style: 'max-width:220px' })),
-      h('p', { class: 'muted' }, t('twofaManual'), ' ', h('code', null, setup.secret)),
-      field(t('twofaCode'), code),
-      btn,
-    );
-    clear(wrap);
-    wrap.append(errBox, form);
-    code.focus();
-  }
-
-  function renderDisable() {
-    const pwd = h('input', { type: 'password', required: true, autocomplete: 'current-password' });
-    const btn = h('button', { class: 'btn btn-secondary', type: 'submit' }, t('twofaDisable'));
-    const form = h('form', {
-      class: 'stacked-form',
-      onsubmit: async (e) => {
-        e.preventDefault();
-        errBox.hidden = true;
-        btn.disabled = true;
-        try {
-          await api.twofaDisable(pwd.value);
-          toast(t('twofaDisabled'));
-          render();
-        } catch (err) {
-          showError(err);
-        } finally {
-          btn.disabled = false;
-        }
-      },
-    },
-      h('p', { class: 'muted' }, t('twofaDisableConfirm')),
-      field(t('authPassword'), pwd),
-      btn,
-    );
-    clear(wrap);
-    wrap.append(errBox, form);
-    pwd.focus();
-  }
-
-  await render();
 }
 
 /** Modale profil : photo de profil (aperçu instantané, changer / retirer). */
@@ -2370,7 +2009,7 @@ async function refreshMsgNavBadge() {
   if (!badge) return;
   if (!currentUser || !new Set(currentUser.permissions ?? []).has('messages.read')) { badge.hidden = true; return; }
   try {
-    const { total } = await api.msgUnreadCount();
+    const { total } = await api.unreadCount();
     badge.hidden = !total;
     badge.textContent = total > 9 ? '9+' : String(total);
   } catch { /* silencieux */ }
@@ -2520,7 +2159,7 @@ async function viewMessages(main) {
   let lastUnreadJson = '';
   const refreshBadges = async (force = false) => {
     try {
-      const { total, byUser } = await api.msgUnreadCount();
+      const { total, byUser } = await api.unreadCount();
       const j = JSON.stringify(byUser || {});
       if (force || j !== lastUnreadJson) { lastUnreadJson = j; renderLists(byUser || {}); }
       const badge = document.getElementById('nav-msg-badge');
@@ -2789,13 +2428,9 @@ let chatBootedFor = null;
 
 function syncChatWidget() {
   const existing = document.getElementById('cej-chat');
-  const staffChat = !!(currentUser && new Set(currentUser.permissions ?? []).has('ai.ask'));
-  // Bulle visible pour le personnel autorisé (mode privé) ET pour les visiteurs
-  // publics non connectés (mode public, assistant d'accueil).
-  const mode = staffChat ? 'staff' : (!currentUser ? 'public' : null);
-  if (!mode) { existing?.remove(); chatBootedFor = null; return; }
-  if (!existing) mountChatWidget(mode);
-  else if (existing.dataset.mode !== mode) { existing.remove(); chatBootedFor = null; mountChatWidget(mode); }
+  const canChat = !!(currentUser && new Set(currentUser.permissions ?? []).has('ai.ask'));
+  if (!canChat) { existing?.remove(); chatBootedFor = null; return; }
+  if (!existing) mountChatWidget();
 }
 
 function chatIconSvg() {
@@ -2808,57 +2443,19 @@ function chatIconSvg() {
   return svg;
 }
 
-function mountChatWidget(mode = 'staff') {
-  const isPublic = mode === 'public';
+function mountChatWidget() {
   const msgs = h('div', { class: 'cej-chat-msgs', role: 'log', 'aria-live': 'polite' });
-  const input = h('input', { type: 'text', class: 'cej-chat-input', placeholder: t(isPublic ? 'chatPublicPlaceholder' : 'chatPlaceholder'), 'aria-label': t('chatTitle'), maxlength: 5000 });
+  const input = h('input', { type: 'text', class: 'cej-chat-input', placeholder: t('chatPlaceholder'), 'aria-label': t('chatTitle'), maxlength: 5000 });
   const sendBtn = h('button', { class: 'cej-chat-send', type: 'button' }, t('chatSend'));
-
-  /* --- Persistance locale : la conversation survit au changement de page --- */
-  const HIST_MAX = 60;
-  const storeKey = () => `cej:chat:${mode}:${getLang()}`;
-  const loadHist = () => {
-    try {
-      const raw = JSON.parse(localStorage.getItem(storeKey()) ?? '[]');
-      if (!Array.isArray(raw)) return [];
-      return raw.filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string').slice(-HIST_MAX);
-    } catch { return []; }
-  };
-  let hist = [];
-  const saveHist = () => { try { localStorage.setItem(storeKey(), JSON.stringify(hist.slice(-HIST_MAX))); } catch { /* quota : on ignore */ } };
-  const pushHist = (role, text) => { hist.push({ role, text }); saveHist(); };
-
-  const renderMsg = (role, text, cls = '') => {
-    const d = h('div', { class: `cej-chat-msg ${role}${cls ? ` ${cls}` : ''}` }, h('p', null, text));
-    msgs.append(d);
-    msgs.scrollTop = msgs.scrollHeight;
-    return d;
-  };
-  const clearHist = () => {
-    hist = [];
-    try { localStorage.removeItem(storeKey()); } catch { /* noop */ }
-    clear(msgs);
-    msgs.scrollTop = 0;
-  };
-
-  const clearBtn = h('button', {
-    class: 'cej-chat-clear', type: 'button', title: t('chatClear'), 'aria-label': t('chatClear'),
-    onclick: () => {
-      clearHist();
-      renderMsg('assistant', t(isPublic ? 'chatPublicWelcome' : 'chatWelcome'));
-      pushHist('assistant', t(isPublic ? 'chatPublicWelcome' : 'chatWelcome'));
-    },
-  }, '↺');
   const panel = h('div', { class: 'cej-chat-panel', hidden: true },
     h('div', { class: 'cej-chat-head' },
       h('span', { class: 'cej-chat-title' }, t('chatTitle')),
-      h('span', { class: 'cej-chat-head-actions' }, clearBtn,
-        h('button', { class: 'cej-chat-close', type: 'button', 'aria-label': '×', onclick: () => toggleChat(false) }, '×'))),
+      h('button', { class: 'cej-chat-close', type: 'button', 'aria-label': '×', onclick: () => toggleChat(false) }, '×')),
     msgs,
     h('div', { class: 'cej-chat-form' }, input, sendBtn));
   const bubble = h('button', { class: 'cej-chat-bubble', type: 'button', 'aria-label': t('chatTitle'), 'aria-expanded': 'false', onclick: () => toggleChat() });
   bubble.append(chatIconSvg());
-  const root = h('div', { id: 'cej-chat', class: 'cej-chat', 'data-mode': mode }, panel, bubble);
+  const root = h('div', { id: 'cej-chat', class: 'cej-chat' }, panel, bubble);
   document.body.append(root);
 
   let sending = false;
@@ -2867,26 +2464,22 @@ function mountChatWidget(mode = 'staff') {
     if (!q || sending) return;
     sending = true;
     input.value = '';
-    renderMsg('user', q);
-    pushHist('user', q);
-    const typing = renderMsg('assistant', t('chatTyping'), 'typing');
+    msgs.append(h('div', { class: 'cej-chat-msg user' }, h('p', null, q)));
+    const typing = h('div', { class: 'cej-chat-msg assistant typing' }, h('p', null, t('chatTyping')));
+    msgs.append(typing);
+    msgs.scrollTop = msgs.scrollHeight;
     try {
-      const r = isPublic
-        ? await api.publicChat(q, getLang())
-        : await api.askAI(q, undefined, getLang());
+      const r = await api.askAI(q, undefined, getLang());
       typing.remove();
-      renderMsg('assistant', r.answer);
-      pushHist('assistant', r.answer);
-      if (!isPublic && (r.sources || []).length) {
+      msgs.append(h('div', { class: 'cej-chat-msg assistant' }, h('p', null, r.answer)));
+      if ((r.sources || []).length) {
         msgs.append(h('div', { class: 'cej-chat-sources' },
           h('span', { class: 'cej-chat-sources-label' }, `${t('chatSources')} :`),
           ...(r.sources || []).map((s) => h('span', { class: 'cej-chat-chip' }, `[${s.number}] ${s.name}`))));
       }
     } catch (err) {
       typing.remove();
-      const msg = errorMessage(err);
-      renderMsg('assistant', msg, 'error');
-      pushHist('assistant', msg);
+      msgs.append(h('div', { class: 'cej-chat-msg assistant error' }, h('p', null, errorMessage(err))));
     }
     sending = false;
     msgs.scrollTop = msgs.scrollHeight;
@@ -2901,26 +2494,19 @@ function mountChatWidget(mode = 'staff') {
     if (open && chatBootedFor !== getLang()) {
       chatBootedFor = getLang();
       clear(msgs);
-      hist = loadHist();
-      for (const m of hist) renderMsg(m.role, m.text);
-      if (!hist.length) {
-        // Visiteurs publics : pas de vérification de statut (endpoint sans auth).
-        input.disabled = false;
-        sendBtn.disabled = false;
-        const welcome = t(isPublic ? 'chatPublicWelcome' : 'chatWelcome');
-        renderMsg('assistant', welcome);
-        pushHist('assistant', welcome);
-      } else if (!isPublic) {
-        try {
-          const status = await api.aiStatus();
-          if (!status.configured) {
-            renderMsg('assistant', t('aiNotReady'), 'error');
-            input.disabled = true;
-            sendBtn.disabled = true;
-          } else { input.disabled = false; sendBtn.disabled = false; }
-        } catch (err) {
-          renderMsg('assistant', errorMessage(err), 'error');
+      try {
+        const status = await api.aiStatus();
+        if (!status.configured) {
+          msgs.append(h('div', { class: 'cej-chat-msg assistant' }, h('p', null, t('aiNotReady'))));
+          input.disabled = true;
+          sendBtn.disabled = true;
+        } else {
+          input.disabled = false;
+          sendBtn.disabled = false;
+          msgs.append(h('div', { class: 'cej-chat-msg assistant' }, h('p', null, t('chatWelcome'))));
         }
+      } catch (err) {
+        msgs.append(h('div', { class: 'cej-chat-msg assistant error' }, h('p', null, errorMessage(err))));
       }
     }
     if (open) setTimeout(() => input.focus(), 60);
@@ -3658,7 +3244,6 @@ async function viewCaseDetail(main, id) {
     ['overview', t('tabOverview'), () => renderOverview()],
     perms.has('documents.read') && ['documents', t('tabDocuments'), () => renderDocuments()],
     ['notes', t('tabNotes'), () => renderNotes()],
-    currentUser.role === 'CLIENT' && ['billable', t('tabBillable'), () => renderBillable()],
   ].filter(Boolean);
 
   function setTab(key) {
@@ -3772,34 +3357,6 @@ async function viewCaseDetail(main, id) {
     } else {
       panel.append(list);
     }
-  }
-
-  async function renderBillable() {
-    // Temps facturable du dossier, calculé en direct à chaque ouverture.
-    panel.append(h('p', { class: 'loading' }, t('loading')));
-    const data = await guarded(() => api.caseBillable(id));
-    clear(panel);
-    if (!data) return;
-    const card = (label, hours, cents) =>
-      h('div', { class: 'kpi' }, h('div', { class: 'kpi-text' }, h('div', { class: 'kpi-value' }, `${hours} h`), h('div', { class: 'kpi-label' }, `${label} · ${fmtMoney(cents)}`)));
-    panel.append(
-      h('div', { class: 'kpi-grid' },
-        card(t('billTotal'), data.totalHours, data.totalCents),
-        card(t('billBilled'), data.billedHours, data.billedCents),
-        card(t('billUnbilled'), data.unbilledHours, data.unbilledCents)),
-      h('p', { class: 'muted' }, t('billLiveHint')),
-      data.lines?.length
-        ? h('div', { class: 'table-wrap' }, h('table', null,
-            h('thead', null, h('tr', null, h('th', null, t('billDate')), h('th', null, t('billDesc')), h('th', { class: 'num' }, t('billHours')), h('th', { class: 'num' }, t('billAmount')), h('th', null, t('billStatus')))),
-            h('tbody', null, ...data.lines.map((l) =>
-              h('tr', null,
-                h('td', null, fmtDate(l.date)),
-                h('td', null, l.description || '—'),
-                h('td', { class: 'num' }, String(l.hours)),
-                h('td', { class: 'num' }, fmtMoney(l.amountCents)),
-                h('td', null, h('span', { class: `badge ${l.invoiceId ? 'badge-success' : ''}` }, l.invoiceId ? t('billBilledTag') : t('billUnbilledTag'))))))))
-        : h('p', { class: 'empty-state' }, t('billEmpty')),
-    );
   }
 
   const statusSelect = perms.has('cases.update')
@@ -4614,27 +4171,6 @@ async function viewInvoices(main) {
           dueAt: h('input', { type: 'date' }),
         };
         const errorBox = h('p', { class: 'form-error', hidden: true });
-        const previewBox = h('div', { class: 'invoice-preview', hidden: true });
-        async function refreshPreview() {
-          clear(previewBox);
-          previewBox.hidden = true;
-          f.amount.readOnly = false;
-          if (!f.caseId.value) return;
-          const pv = await api.invoicePreview(f.caseId.value).catch(() => null);
-          if (!pv || !pv.lines?.length) return;
-          previewBox.hidden = false;
-          previewBox.append(
-            h('h4', null, t('invTimePreview', { n: pv.count })),
-            h('ul', { class: 'invoice-preview-lines' }, ...pv.lines.map((l) =>
-              h('li', null,
-                h('span', null, `${fmtDate(l.date)} · ${l.hours} h × ${fmtMoney(Math.round(l.rate * 100))}`),
-                h('strong', null, fmtMoney(l.amountCents))))),
-            h('p', { class: 'invoice-preview-total' }, h('span', null, t('invTimeTotal')), h('strong', null, fmtMoney(pv.totalCents))),
-          );
-          f.amount.value = (pv.totalCents / 100).toFixed(2);
-          f.amount.readOnly = true;
-        }
-        f.caseId.addEventListener('change', () => { refreshPreview(); });
         const form = h(
           'form', { class: 'stacked-form', onsubmit: async (e) => {
             e.preventDefault();
@@ -4656,7 +4192,6 @@ async function viewInvoices(main) {
             }
           } },
           field(t('invClient'), f.clientId), field(t('invCaseOpt'), f.caseId),
-          previewBox,
           h('div', { class: 'form-row' }, field(t('invAmount'), f.amount), field(t('invTax'), f.tax)),
           field(t('invDueDate'), f.dueAt),
           errorBox,
@@ -4688,32 +4223,11 @@ async function viewInvoices(main) {
 
 async function viewUsers(main) {
   const tableBody = h('tbody');
-  const perms = new Set(currentUser?.permissions ?? []);
-  const canDelete = perms.has('users.delete');
-  const canUpdate = perms.has('users.update');
 
   async function load() {
     const rows = await guarded(() => api.users());
     clear(tableBody);
     for (const u of rows ?? []) {
-      const actions = [];
-      if (u.isActive) {
-        if (canDelete) {
-          actions.push(h('button', { class: 'link-btn', type: 'button', onclick: async () => {
-            if (!confirm(t('userDeactivateConfirm'))) return;
-            const r = await guarded(() => api.deleteUser(u.id));
-            if (r !== undefined) {
-              toast(t('userDeactivated'));
-              load();
-            }
-          } }, t('userDeactivate')));
-        }
-      } else if (canUpdate) {
-        actions.push(h('button', { class: 'link-btn', type: 'button', onclick: async () => {
-          await guarded(() => api.updateUser(u.id, { isActive: true }));
-          load();
-        } }, t('userActivate')));
-      }
       tableBody.append(
         h(
           'tr',
@@ -4722,7 +4236,10 @@ async function viewUsers(main) {
           h('td', null, u.email),
           h('td', null, ROLE_LABEL()[u.role] ?? u.role),
           h('td', null, h('span', { class: `status status-${u.isActive ? 'active' : 'inactive'}` }, h('span', { class: 'status-dot' }), u.isActive ? t('userActive') : t('userDisabled'))),
-          h('td', null, ...actions),
+          h('td', null, h('button', { class: 'link-btn', type: 'button', onclick: async () => {
+            await guarded(() => api.updateUser(u.id, { isActive: !u.isActive }));
+            load();
+          } }, u.isActive ? t('userDeactivate') : t('userActivate'))),
         ),
       );
     }
@@ -4838,85 +4355,6 @@ async function viewContactMessages(main) {
     );
     list.append(card);
   }
-}
-
-/* ------------------------------------------------------------------ */
-/* Demandes d'accès (admin)                                            */
-/* ------------------------------------------------------------------ */
-
-async function viewAccessRequests(main) {
-  const list = h('div', { class: 'stack' });
-
-  async function load() {
-    const rows = await guarded(() => api.registrationRequests());
-    clear(list);
-    const pending = (rows ?? []).filter((r) => r.status === 'PENDING');
-    if (!pending.length) {
-      list.append(h('p', { class: 'empty-state' }, t('accessReqEmpty')));
-      return;
-    }
-    for (const r of pending) {
-      const name = `${r.first_name} ${r.last_name}`;
-      const roleSelect = h(
-        'select',
-        { class: 'status-select', 'aria-label': t('accessReqRole') },
-        ...['ADMIN', 'LAWYER', 'ASSISTANT', 'ACCOUNTANT'].map((role) =>
-          h('option', { value: role, ...(role === 'LAWYER' ? { selected: true } : {}) }, ROLE_LABEL()[role] ?? role),
-        ),
-      );
-      const approveBtn = h('button', { class: 'btn btn-small btn-primary', type: 'button' }, t('accessReqApprove'));
-      approveBtn.onclick = async () => {
-        if (!confirm(t('accessReqConfirmApprove', { name }))) return;
-        approveBtn.disabled = true;
-        try {
-          const res = await guarded(() => api.reviewRegistrationRequest(r.id, { status: 'APPROVED', role: roleSelect.value }));
-          if (res?.user) {
-            toast(`${t('accessReqApproved')} ${res.emailed ? t('accessReqEmailed') : t('accessReqTempPassword', { password: res.tempPassword })}`);
-            load();
-          }
-        } finally {
-          approveBtn.disabled = false;
-        }
-      };
-      const rejectBtn = h('button', { class: 'btn btn-small btn-secondary', type: 'button' }, t('accessReqReject'));
-      rejectBtn.onclick = async () => {
-        if (!confirm(t('accessReqConfirmReject', { name }))) return;
-        const res = await guarded(() => api.reviewRegistrationRequest(r.id, { status: 'REJECTED' }));
-        if (res) { toast(t('accessReqRejected')); load(); }
-      };
-      list.append(
-        h(
-          'article',
-          { class: 'panel contact-msg unread' },
-          h(
-            'div',
-            { class: 'contact-msg-head' },
-            h('div', null, h('strong', null, name), h('span', { class: 'muted' }, ` · ${r.email}`)),
-            h('span', { class: 'muted' }, fmtDate(r.created_at)),
-          ),
-          r.message ? h('p', null, h('strong', null, `${t('accessReqMessage')} : `), r.message) : null,
-          h(
-            'div',
-            { class: 'contact-msg-actions' },
-            h('label', { class: 'muted' }, `${t('accessReqRole')} `, roleSelect),
-            approveBtn,
-            rejectBtn,
-          ),
-        ),
-      );
-    }
-  }
-
-  clear(main).append(
-    h(
-      'div',
-      { class: 'page' },
-      h('div', { class: 'page-head' }, h('h1', { tabindex: '-1' }, t('accessReqTitle')), h('p', { class: 'muted' }, t('accessReqSubtitle'))),
-      list,
-    ),
-  );
-  await load();
-  main.focus({ preventScroll: true });
 }
 
 /* ------------------------------------------------------------------ */
@@ -5528,54 +4966,14 @@ function buildRichEditor(initialHtml) {
   });
   area.innerHTML = initialHtml || '';
 
-  /* Le curseur sautait au début du paragraphe à chaque mise en forme parce que
-   * normalizeRte reconstruit des nœuds du DOM. On marque la position du curseur
-   * avant la mutation et on la restaure juste après. */
-  const withCursor = (fn) => {
-    const sel = document.getSelection();
-    let saved = null;
-    let marker = null;
-    if (sel && sel.rangeCount > 0) {
-      const r0 = sel.getRangeAt(0);
-      if (area.contains(r0.commonAncestorContainer)) {
-        saved = r0.cloneRange();
-        if (r0.collapsed) {
-          marker = document.createElement('span');
-          marker.setAttribute('data-rte-cursor', '1');
-          saved.insertNode(marker);
-        }
-      }
-    }
-    fn();
-    const m = marker ? area.querySelector('[data-rte-cursor]') : null;
-    if (m && sel) {
-      const r = document.createRange();
-      r.setStartAfter(m);
-      r.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(r);
-      m.remove();
-    } else if (saved && sel) {
-      try { sel.removeAllRanges(); sel.addRange(saved); } catch { /* DOM trop changé : on ignore */ }
-    }
-    area.focus();
-  };
-
   const exec = (cmd, arg = null) => {
     area.focus();
-    withCursor(() => {
-      document.execCommand(cmd, false, arg);
-      normalizeRte(area);
-    });
+    document.execCommand(cmd, false, arg);
+    normalizeRte(area);
     syncStates();
   };
 
-  /* Une section du menu vertical : titre + contrôles. */
-  const section = (labelKey, ...kids) => h('section', { class: 'rte-sec' },
-    h('h4', { class: 'rte-sec-title' }, t(labelKey)),
-    h('div', { class: 'rte-sec-body' }, ...kids));
-  const btnRow = (...kids) => h('div', { class: 'rte-btnrow' }, ...kids);
-  const sideLabel = (labelKey) => h('div', { class: 'rte-label' }, t(labelKey));
+  const group = (...kids) => h('span', { class: 'rte-group' }, ...kids);
   const btn = (inner, title, onclick, cmdName = null) => {
     const b = h('button', {
       class: 'rte-btn', type: 'button', title, 'aria-label': title,
@@ -5617,29 +5015,26 @@ function buildRichEditor(initialHtml) {
       const px = sizeSel.value;
       sizeSel.selectedIndex = 0;
       area.focus();
-      withCursor(() => {
-        // fontSize=7 produit <font size="7">, converti aussitôt en <span style>.
-        document.execCommand('fontSize', false, '7');
-        area.querySelectorAll('font[size="7"]').forEach((el) => {
-          const span = document.createElement('span');
-          span.style.fontSize = px;
-          span.innerHTML = el.innerHTML;
-          el.replaceWith(span);
-        });
-        normalizeRte(area);
+      // fontSize=7 produit <font size="7">, converti aussitôt en <span style>.
+      document.execCommand('fontSize', false, '7');
+      area.querySelectorAll('font[size="7"]').forEach((el) => {
+        const span = document.createElement('span');
+        span.style.fontSize = px;
+        span.innerHTML = el.innerHTML;
+        el.replaceWith(span);
       });
       syncStates();
     },
   }, h('option', { value: '' }, t('rteSize')), ...RTE_SIZES.map((s) => h('option', { value: s.px }, t(s.key))));
 
-  // --- Couleurs : pastilles prédéfinies + sélecteur libre (retourne la liste des contrôles)
+  // --- Couleurs : pastilles prédéfinies + sélecteur libre
   const colorRow = (colors, title, apply) => {
     const custom = h('input', {
       class: 'rte-color', type: 'color', title: `${title} (${t('rteCustom')})`, 'aria-label': `${title} (${t('rteCustom')})`,
       onmousedown: (e) => e.stopPropagation(),
       onchange: () => apply(custom.value),
     });
-    return [
+    return group(
       ...colors.map((c) => h('button', {
         class: 'rte-swatch', type: 'button', title: `${title} — ${c}`, 'aria-label': `${title} — ${c}`,
         style: `background:${c}`,
@@ -5647,7 +5042,7 @@ function buildRichEditor(initialHtml) {
         onclick: () => apply(c),
       })),
       custom,
-    ];
+    );
   };
 
   // --- Barre d'outils flottante des images
@@ -5724,100 +5119,52 @@ function buildRichEditor(initialHtml) {
     document.execCommand('insertHTML', false, `<img src="${url.trim().replace(/"/g, '')}" alt="" class="img-full">`);
   };
 
-  /* Menu vertical à gauche : toutes les options de mise en forme, par section. */
-  const side = h('aside', { class: 'rte-side', role: 'toolbar', 'aria-label': t('blogContent') },
-    section('rteSecText',
-      sideLabel('rteBlock'), blockSel,
-      sideLabel('rteFont'), fontSel,
-      sideLabel('rteSize'), sizeSel,
-      btnRow(
-        btn(h('b', null, 'B'), t('rteBold'), () => exec('bold'), 'bold'),
-        btn(h('i', null, 'I'), t('rteItalic'), () => exec('italic'), 'italic'),
-        btn(h('u', null, 'U'), t('rteUnderline'), () => exec('underline'), 'underline'),
-        btn(h('s', null, 'S'), t('rteStrike'), () => exec('strikeThrough'), 'strikeThrough'),
-        btn(h('span', { class: 'rte-supsub' }, 'x₂'), t('rteSub'), () => exec('subscript'), 'subscript'),
-        btn(h('span', { class: 'rte-supsub' }, 'x²'), t('rteSup'), () => exec('superscript'), 'superscript'),
-      ),
-      sideLabel('rteTextColor'),
-      btnRow(...colorRow(RTE_TEXT_COLORS, t('rteTextColor'), (c) => exec('foreColor', c))),
-      sideLabel('rteHighlight'),
-      btnRow(...colorRow(RTE_HL_COLORS, t('rteHighlight'), (c) => exec('hiliteColor', c))),
+  const toolbar = h('div', { class: 'rte-toolbar', role: 'toolbar', 'aria-label': t('blogContent') },
+    group(blockSel, fontSel, sizeSel),
+    group(
+      btn(h('b', null, 'B'), t('rteBold'), () => exec('bold'), 'bold'),
+      btn(h('i', null, 'I'), t('rteItalic'), () => exec('italic'), 'italic'),
+      btn(h('u', null, 'U'), t('rteUnderline'), () => exec('underline'), 'underline'),
+      btn(h('s', null, 'S'), t('rteStrike'), () => exec('strikeThrough'), 'strikeThrough'),
     ),
-    section('rteSecParagraph',
-      btnRow(
-        btn(icon('alignLeft'), t('rteAlignLeft'), () => exec('justifyLeft')),
-        btn(icon('alignCenter'), t('rteAlignCenter'), () => exec('justifyCenter')),
-        btn(icon('alignRight'), t('rteAlignRight'), () => exec('justifyRight')),
-        btn(icon('alignJustify'), t('rteAlignJustify'), () => exec('justifyFull')),
-      ),
-      btnRow(
-        btn(icon('listBullet'), t('rteBullet'), () => exec('insertUnorderedList')),
-        btn(icon('listNumbered'), t('rteNumbered'), () => exec('insertOrderedList')),
-        btn(icon('quote'), t('rteQuote'), () => exec('formatBlock', 'blockquote')),
-      ),
-      btnRow(
-        btn(icon('indentDec'), t('rteOutdent'), () => exec('outdent')),
-        btn(icon('indentInc'), t('rteIndent'), () => exec('indent')),
-      ),
+    colorRow(RTE_TEXT_COLORS, t('rteTextColor'), (c) => exec('foreColor', c)),
+    colorRow(RTE_HL_COLORS, t('rteHighlight'), (c) => exec('hiliteColor', c)),
+    group(
+      btn(icon('alignLeft'), t('rteAlignLeft'), () => exec('justifyLeft')),
+      btn(icon('alignCenter'), t('rteAlignCenter'), () => exec('justifyCenter')),
+      btn(icon('alignRight'), t('rteAlignRight'), () => exec('justifyRight')),
+      btn(icon('alignJustify'), t('rteAlignJustify'), () => exec('justifyFull')),
     ),
-    section('rteSecInsert',
-      btnRow(
-        btn(icon('linkIcon'), t('rteLink'), () => {
-          const url = prompt(t('rteLinkPrompt'), 'https://');
-          if (!url || !url.trim()) return;
-          const clean = url.trim();
-          const full = /^(https?:\/\/|mailto:|#)/i.test(clean) ? clean : `https://${clean}`;
-          exec('createLink', full);
-        }),
-        btn(icon('unlinkIcon'), t('rteUnlink'), () => exec('unlink')),
-        btn(icon('imageIcon'), t('rteImageUpload'), () => imgFileInput.click()),
-        btn(icon('imageIcon'), t('rteImageUrl'), insertImageUrl),
-        btn(icon('hrIcon'), t('rteHr'), () => exec('insertHorizontalRule')),
-      ),
+    group(
+      btn(icon('listBullet'), t('rteBullet'), () => exec('insertUnorderedList')),
+      btn(icon('listNumbered'), t('rteNumbered'), () => exec('insertOrderedList')),
+      btn(icon('quote'), t('rteQuote'), () => exec('formatBlock', 'blockquote')),
     ),
-    section('rteSecTools',
-      btnRow(
-        btn(icon('clearFormat'), t('rteClear'), () => exec('removeFormat')),
-      ),
+    group(
+      btn(icon('linkIcon'), t('rteLink'), () => {
+        const url = prompt(t('rteLinkPrompt'), 'https://');
+        if (!url || !url.trim()) return;
+        const clean = url.trim();
+        const full = /^(https?:\/\/|mailto:|#)/i.test(clean) ? clean : `https://${clean}`;
+        exec('createLink', full);
+      }),
+      btn(icon('imageIcon'), t('rteImageUpload'), () => imgFileInput.click()),
+      btn(icon('imageIcon'), t('rteImageUrl'), insertImageUrl),
+    ),
+    group(
+      btn(icon('clearFormat'), t('rteClear'), () => exec('removeFormat')),
     ),
   );
 
-  const main = h('div', { class: 'rte-main' }, area, imgBar, imgFileInput);
-  wrap.append(h('div', { class: 'rte-layout' }, side, main));
-  return { wrap, getHtml: () => { normalizeRte(area); hideImgBar(); return area.innerHTML; }, setHtml: (html) => { area.innerHTML = html || ''; } };
-}
-
-/** Initiales pour le cercle de repli du byline (ex. « Benoni Tshibamba » → « BT »). */
-function authorInitials(name) {
-  return String(name || '').trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
-}
-
-/** Byline d'article : photo ronde de l'auteur (ou cercle d'initiales), sinon « Admin ». */
-function authorBylineEl(author) {
-  if (!author?.name) return h('span', null, 'Admin');
-  const face = author.photoUrl
-    ? h('img', { class: 'byline-photo', src: mediaUrl(author.photoUrl), alt: '' })
-    : h('span', { class: 'byline-initials' }, authorInitials(author.name));
-  return h('span', { class: 'byline' }, face, h('span', null, author.name));
+  wrap.append(toolbar, area, imgBar, imgFileInput);
+  return { wrap, getHtml: () => { normalizeRte(area); hideImgBar(); return area.innerHTML; } };
 }
 
 function openBlogEditor(existing = null, refresh) {
   const f = {
     title: h('input', { required: true, value: existing?.title || '', placeholder: t('blogTitlePh') }),
     excerpt: h('textarea', { rows: 2, maxlength: 500, placeholder: t('blogExcerptPh') }, existing?.excerpt || ''),
-    author: h('select', null, h('option', { value: '' }, t('loading'))),
   };
-  // Auteurs : chargés async, présélection de l'auteur actuel (ou du premier pour un nouvel article).
-  let authorsLoaded = false;
-  api.authors().then((authors) => {
-    clear(f.author);
-    f.author.append(h('option', { value: '' }, `— ${t('blogAuthorNone')} —`));
-    for (const a of authors ?? []) {
-      f.author.append(h('option', { value: String(a.id), selected: existing?.author?.id === a.id }, a.name));
-    }
-    if (!existing?.author?.id && (authors ?? []).length && !f.author.value) f.author.value = String(authors[0].id);
-    authorsLoaded = true;
-  }).catch(() => { clear(f.author).append(h('option', { value: '' }, `— ${t('blogAuthorNone')} —`)); });
   const editor = buildRichEditor(existing?.content_html || '');
   let coverFile = null;
   const coverPreview = h('div', { class: 'post-thumbs', hidden: !existing?.coverUrl },
@@ -5835,8 +5182,6 @@ function openBlogEditor(existing = null, refresh) {
     errorBox.hidden = true;
     try {
       const body = { title: f.title.value.trim(), excerpt: f.excerpt.value.trim(), content_html: editor.getHtml(), status };
-      // N'écrase l'auteur que si la liste des auteurs a bien été chargée.
-      if (authorsLoaded) body.author_id = f.author.value ? Number(f.author.value) : null;
       if (existing) await api.updateBlogPost(existing.id, body, coverFile);
       else await api.createBlogPost(body, coverFile);
       close();
@@ -5844,118 +5189,16 @@ function openBlogEditor(existing = null, refresh) {
       refresh();
     } catch (err) { errorBox.textContent = errorMessage(err); errorBox.hidden = false; }
   };
-  const aiModal = () => {
-    const topic = h('input', { required: true, maxlength: 500, placeholder: t('blogAiTopicPh') });
-    const tone = h('input', { maxlength: 120, placeholder: t('blogAiTonePh') });
-    const length = h('select', null,
-      h('option', { value: 'court' }, t('blogAiLenShort')),
-      h('option', { value: 'moyen', selected: true }, t('blogAiLenMedium')),
-      h('option', { value: 'long' }, t('blogAiLenLong')));
-    const aiError = h('p', { class: 'form-error', hidden: true });
-    const genBtn = h('button', { class: 'btn btn-primary', type: 'submit' }, t('blogAiGenerate'));
-    const aiForm = h('form', { class: 'stacked-form', onsubmit: async (e) => {
-      e.preventDefault();
-      aiError.hidden = true;
-      genBtn.disabled = true;
-      genBtn.textContent = t('blogAiWorking');
-      try {
-        const r = await api.generateBlogPost({ topic: topic.value.trim(), lang: getLang(), tone: tone.value.trim() || undefined, length: length.value });
-        f.title.value = r.title || '';
-        editor.setHtml(r.contentHtml || '');
-        aiClose();
-        toast(t('blogAiDone'));
-      } catch (err) {
-        aiError.textContent = errorMessage(err);
-        aiError.hidden = false;
-      }
-      genBtn.disabled = false;
-      genBtn.textContent = t('blogAiGenerate');
-    } },
-      field(t('blogAiTopic'), topic),
-      field(t('blogAiTone'), tone),
-      field(t('blogAiLength'), length),
-      aiError, genBtn);
-    const aiClose = openModal(t('blogAiTitle'), aiForm);
-  };
   const form = h('form', { class: 'stacked-form', onsubmit: (e) => { e.preventDefault(); save(existing?.status === 'published' ? 'published' : 'draft'); } },
     field(t('blogTitle'), f.title),
-    field(t('blogAuthor'), f.author),
     field(t('blogExcerpt'), f.excerpt),
     field(t('blogContent'), editor.wrap),
     field(t('blogCover'), coverInput), coverPreview,
     errorBox,
     h('div', { class: 'form-row' },
-      h('button', { class: 'btn btn-secondary', type: 'button', onclick: aiModal }, t('blogAiButton')),
       h('button', { class: 'btn btn-secondary', type: 'submit' }, t('blogSaveDraft')),
       h('button', { class: 'btn btn-primary', type: 'button', onclick: () => save('published') }, t('blogPublish'))));
   const close = openModal(existing ? t('blogEdit') : t('blogNew'), form, { wide: true });
-}
-
-
-/** Gestion des auteurs d'articles (byline avec photo) dans la section blog. */
-async function openAuthorsManager(refreshBlog) {
-  const list = h('div', null);
-  const errorBox = h('p', { class: 'form-error', hidden: true });
-  const load = async () => {
-    errorBox.hidden = true;
-    clear(list).append(h('p', { class: 'loading' }, t('loading')));
-    const authors = await guarded(() => api.authors(), { onError: (m) => { errorBox.textContent = m; errorBox.hidden = false; } });
-    clear(list);
-    if (!authors?.length) { list.append(h('p', { class: 'empty-state' }, t('blogAuthorsEmpty'))); return; }
-    for (const a of authors) {
-      const face = a.photoUrl
-        ? h('img', { class: 'byline-photo', src: mediaUrl(a.photoUrl), alt: '' })
-        : h('span', { class: 'byline-initials' }, authorInitials(a.name));
-      const row = h('div', { class: 'author-row' }, face,
-        h('span', { class: 'author-row-name' }, a.name),
-        h('span', { class: 'author-row-actions' },
-          h('button', { class: 'btn btn-small', type: 'button', onclick: () => openAuthorEditor(a, load) }, t('edit')),
-          h('button', { class: 'btn btn-small danger', type: 'button', onclick: async () => {
-            if (!confirm(t('blogAuthorDeleteConfirm'))) return;
-            await guarded(() => api.deleteAuthor(a.id), { onError: (m) => { errorBox.textContent = m; errorBox.hidden = false; } });
-            await load(); refreshBlog?.();
-          } }, t('delete'))));
-      list.append(row);
-    }
-  };
-  const addBtn = h('button', { class: 'btn btn-primary', type: 'button', onclick: () => openAuthorEditor(null, load) }, icon('plus'), t('blogAuthorNew'));
-  openModal(t('blogAuthors'), h('div', { class: 'stacked-form' }, errorBox, list, addBtn));
-  await load();
-}
-
-/** Création / édition d'un auteur (nom + photo). */
-function openAuthorEditor(existing, refresh) {
-  const name = h('input', { required: true, maxlength: 120, value: existing?.name || '', placeholder: t('blogAuthorNamePh') });
-  let photoFile = null;
-  let removePhoto = false;
-  const preview = h('div', { class: 'post-thumbs', hidden: !existing?.photoUrl },
-    existing?.photoUrl ? h('div', { class: 'post-thumb' }, h('img', { src: mediaUrl(existing.photoUrl), alt: '' })) : null);
-  const photoInput = h('input', {
-    type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', onchange: () => {
-      photoFile = photoInput.files[0] || null;
-      removePhoto = false;
-      clear(preview);
-      if (photoFile) preview.append(h('div', { class: 'post-thumb' }, h('img', { src: URL.createObjectURL(photoFile), alt: '' })));
-      preview.hidden = !photoFile && !existing?.photoUrl;
-    },
-  });
-  const removeBtn = existing?.photoUrl
-    ? h('button', { class: 'btn btn-small danger', type: 'button', onclick: () => { removePhoto = true; photoFile = null; photoInput.value = ''; clear(preview); preview.hidden = true; } }, t('blogAuthorPhotoRemove'))
-    : null;
-  const errorBox = h('p', { class: 'form-error', hidden: true });
-  const form = h('form', { class: 'stacked-form', onsubmit: async (e) => {
-    e.preventDefault();
-    errorBox.hidden = true;
-    const done = await guarded(() => existing
-      ? api.updateAuthor(existing.id, name.value.trim(), photoFile, removePhoto)
-      : api.createAuthor(name.value.trim(), photoFile),
-      { onError: (m) => { errorBox.textContent = m; errorBox.hidden = false; } });
-    if (done !== undefined) { close(); refresh(); }
-  } },
-    field(t('blogAuthorName'), name),
-    field(t('blogAuthorPhoto'), photoInput), preview, removeBtn, errorBox,
-    h('button', { class: 'btn btn-primary', type: 'submit' }, t('save')));
-  const close = openModal(existing ? t('blogAuthorEdit') : t('blogAuthorNew'), form);
 }
 
 
@@ -5982,7 +5225,7 @@ async function viewBlog(main) {
           h('div', { class: 'blog-row-head' },
             h('h3', null, b.title),
             h('span', { class: `badge ${b.status === 'published' ? 'badge-ok' : ''}` }, b.status === 'published' ? t('blogStatusPublished') : t('blogStatusDraft'))),
-          h('p', { class: 'blog-row-meta' }, `/${b.slug} · `, authorBylineEl(b.author), ` · ${fmtDateTime(b.updatedAt)}`),
+          h('p', { class: 'muted' }, `/${b.slug} · ${b.author.firstName} ${b.author.lastName} · ${fmtDateTime(b.updatedAt)}`),
           b.excerpt ? h('p', { class: 'blog-row-excerpt' }, b.excerpt) : null,
           actions)));
     }
@@ -5992,11 +5235,10 @@ async function viewBlog(main) {
     tabs.append(h('button', { class: `btn btn-secondary${v === tab ? ' is-active' : ''}`, type: 'button', dataset: { tab: v }, onclick: () => setTab(v) }, label));
   }
   const newBtn = h('button', { class: 'btn btn-primary', type: 'button', onclick: () => openBlogEditor(null, load) }, icon('plus'), t('blogNew'));
-  const authorsBtn = h('button', { class: 'btn btn-secondary', type: 'button', onclick: () => openAuthorsManager(load) }, t('blogAuthors'));
   const viewPublic = h('a', { class: 'btn btn-secondary', href: '/blog', target: '_blank', rel: 'noopener' }, t('blogViewBlog'));
   clear(main).append(
     h('div', { class: 'page' },
-      h('div', { class: 'page-head' }, h('h1', { tabindex: '-1' }, t('navBlog')), h('div', { class: 'page-actions' }, viewPublic, authorsBtn, newBtn)),
+      h('div', { class: 'page-head' }, h('h1', { tabindex: '-1' }, t('navBlog')), h('div', { class: 'page-actions' }, viewPublic, newBtn)),
       tabs, list),
   );
   await load();

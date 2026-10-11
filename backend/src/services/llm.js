@@ -62,7 +62,7 @@ function requireKey(cfg) {
   return cfg.key;
 }
 
-async function postJSON(url, headers, body, cfg, timeoutMs = 45000) {
+async function postJSON(url, headers, body, cfg, timeoutMs = 120000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -74,17 +74,8 @@ async function postJSON(url, headers, body, cfg, timeoutMs = 45000) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      const message = String(data?.error?.message || data?.error || `${cfg.label} a répondu avec HTTP ${response.status}.`);
-      // Surcharge / quota du fournisseur : message FRANÇAIS, complet et
-      // compréhensible — jamais le texte brut anglais du fournisseur.
-      if (isOverloaded(response.status, message)) {
-        throw new HttpError(
-          503,
-          'llm_overloaded',
-          'Le modèle d’IA est momentanément surchargé. Veuillez réessayer dans quelques instants.',
-        );
-      }
-      throw new HttpError(502, 'llm_error', message);
+      const message = data?.error?.message || data?.error || `${cfg.label} a répondu avec HTTP ${response.status}.`;
+      throw new HttpError(502, 'llm_error', String(message));
     }
     return data;
   } catch (err) {
@@ -96,14 +87,6 @@ async function postJSON(url, headers, body, cfg, timeoutMs = 45000) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-// Détecte une surcharge / limite du fournisseur (HTTP 503/429 ou message
-// explicite) pour répondre un message français convivial plutôt que de
-// propager le texte brut anglais du fournisseur.
-function isOverloaded(status, message) {
-  if (status === 503 || status === 429) return true;
-  return /overload|high demand|try again later|temporarily unavailable|resource[_\s]?exhausted|capacity|rate[_\s]?limit|quota exceeded/i.test(message);
 }
 
 // Statut de l'assistant — n'appelle JAMAIS l'API (aucun quota consommé).

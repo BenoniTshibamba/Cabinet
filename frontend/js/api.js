@@ -84,15 +84,6 @@ export const api = {
   login: (email, password) => request('/auth/login', { method: 'POST', body: { email, password }, retry: false }),
   me: () => request('/auth/me'),
   changePassword: (currentPassword, newPassword) => request('/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } }),
-  forgotPassword: (email) => request('/auth/forgot-password', { method: 'POST', body: { email }, retry: false }),
-  resetPassword: (token, newPassword) => request('/auth/reset-password', { method: 'POST', body: { token, newPassword }, retry: false }),
-  twofaStatus: () => request('/auth/2fa/status'),
-  twofaSetup: () => request('/auth/2fa/setup', { method: 'POST' }),
-  twofaVerify: (code) => request('/auth/2fa/verify', { method: 'POST', body: { code } }),
-  twofaDisable: (password) => request('/auth/2fa/disable', { method: 'POST', body: { password } }),
-  twofaLogin: (tempToken, code) => request('/auth/2fa/login', { method: 'POST', body: { tempToken, code }, retry: false }),
-  oauthGoogleStatus: () => request('/auth/oauth/google/status', { retry: false }),
-  oauthGoogleComplete: (code) => request('/auth/oauth/google/complete', { method: 'POST', body: { code }, retry: false }),
 
   dashboard: () => request('/dashboard'),
 
@@ -119,8 +110,6 @@ export const api = {
 
   invoices: (params = {}) => request(`/invoices?${new URLSearchParams(params)}`),
   createInvoice: (body) => request('/invoices', { method: 'POST', body }),
-  invoicePreview: (caseId) => request(`/invoices/preview?case_id=${encodeURIComponent(caseId)}`),
-  caseBillable: (caseId) => request(`/invoices/billable?case_id=${encodeURIComponent(caseId)}`),
   setInvoiceStatus: (id, status) => request(`/invoices/${id}/status`, { method: 'PATCH', body: { status } }),
 
   notifications: () => request('/notifications'),
@@ -131,7 +120,6 @@ export const api = {
   users: () => request('/users'),
   createUser: (body) => request('/users', { method: 'POST', body }),
   updateUser: (id, body) => request(`/users/${id}`, { method: 'PATCH', body }),
-  deleteUser: (id) => request(`/users/${id}`, { method: 'DELETE' }),
 
   auditLogs: (params = {}) => request(`/audit-logs?${new URLSearchParams(params)}`),
 
@@ -167,12 +155,8 @@ export const api = {
   sendMessage: (recipientId, content) => request('/social/messages', { method: 'POST', body: { recipientId, content } }),
   aiStatus: () => request('/ai/status'),
   askAI: (question, caseId) => request('/ai/ask', { method: 'POST', body: { question, ...(caseId ? { caseId } : {}) } }),
-  publicChat: (question, lang) => request('/public/chat', { method: 'POST', body: { question, lang } }),
-  generateBlogPost: (body) => request('/blog/ai-generate', { method: 'POST', body }),
   indexDocument: (id) => request(`/ai/index-document/${id}`, { method: 'POST' }),
   registerRequest: (body) => request('/registration-requests', { method: 'POST', body }),
-  registrationRequests: () => request('/registration-requests'),
-  reviewRegistrationRequest: (id, body) => request(`/registration-requests/${id}`, { method: 'PATCH', body }),
 
   // Formulaire de contact public.
   sendContact: (body) => request('/contact', { method: 'POST', body }),
