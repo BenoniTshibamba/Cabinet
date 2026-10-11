@@ -57,7 +57,16 @@ router.patch('/:id', requireAuth, requirePermission('users.read'), async (req, r
     if (body.status === 'REJECTED') {
       await query(`UPDATE registration_requests SET status = 'REJECTED' WHERE id = $1`, [id]);
       await logAudit({ userId: req.user.id, action: 'REGISTRATION_REJECTED', resourceType: 'registration_request', resourceId: id, ip: req.ip });
-      return res.json({ id, status: 'REJECTED' });
+      // Courriel de refus poli (best effort, jamais bloquant).
+      let emailed = false;
+      if (isMailConfigured()) {
+        emailed = await sendMail({
+          to: r.email,
+          subject: 'Votre demande d\u2019accès — Cabinet Élite Juridique',
+          text: `Bonjour ${r.first_name},\n\nNous avons bien examiné votre demande d'accès au Cabinet Élite Juridique. Malheureusement, nous ne pouvons pas y donner suite pour le moment.\n\nSi vous pensez qu'il s'agit d'une erreur, n'hésitez pas à nous contacter.\n\n— Cabinet Élite Juridique`,
+        });
+      }
+      return res.json({ id, status: 'REJECTED', emailed });
     }
 
     // APPROVED — créer le compte utilisateur avec un mot de passe temporaire.

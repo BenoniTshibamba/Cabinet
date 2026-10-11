@@ -20,7 +20,7 @@ import timeEntryRoutes from './routes/time-entries.js';
 import templateRoutes from './routes/templates.js';
 import savedFilterRoutes from './routes/saved-filters.js';
 import settingsRoutes, { BRANDING_DIR } from './routes/settings.js';
-import blogRoutes, { BLOG_COVERS_DIR } from './routes/blog.js';
+import blogRoutes, { BLOG_COVERS_DIR, BLOG_IMAGES_DIR, AUTHOR_PHOTOS_DIR } from './routes/blog.js';
 import practiceAreaRoutes from './routes/practice-areas.js';
 import contactRoutes from './routes/contact.js';
 import publicChatRoutes from './routes/public-chat.js';
@@ -34,6 +34,10 @@ const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'fr
 export function createApp() {
   const app = express();
   app.disable('x-powered-by');
+  // Derrière le proxy de Render : req.ip doit refléter l'IP réelle du visiteur
+  // (sinon les limiteurs de débit par IP — contact, chat public — s'appliquent
+  // à l'IP du proxy, donc à tous les visiteurs à la fois).
+  app.set('trust proxy', 1);
   // Autorise le frontend servi séparément en développement, tout en restant
   // compatible avec le frontend servi par Express sur :4000.
   const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:4000,http://127.0.0.1:4000,http://localhost:3000,http://127.0.0.1:3000,http://localhost:5500,http://127.0.0.1:5500')
@@ -95,7 +99,10 @@ export function createApp() {
   app.use('/uploads/branding', express.static(BRANDING_DIR));
   // Couvertures des articles de blog : lecture publique (référencement).
   app.use('/uploads/blog-covers', express.static(BLOG_COVERS_DIR));
-  // Photos des témoignages : lecture publique (page d'accueil).
+  // Images insérées dans le corps des articles : lecture publique (référencement).
+  // (Oublié en v5 — les /uploads/blog-images/* retournaient 404 malgré le disque persistant.)
+  app.use('/uploads/blog-images', express.static(BLOG_IMAGES_DIR));
+  app.use('/uploads/author-photos', express.static(AUTHOR_PHOTOS_DIR));  // Photos des auteurs d'articles : lecture publique (blog).
   app.use('/uploads/testimonials', express.static(TESTIMONIALS_DIR));
   // Photos de profil des utilisateurs.
   app.use('/uploads/avatars', express.static(AVATARS_DIR));

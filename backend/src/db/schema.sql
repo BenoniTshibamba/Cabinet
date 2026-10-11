@@ -306,7 +306,7 @@ CREATE TABLE IF NOT EXISTS site_settings (
   hero_title TEXT NOT NULL DEFAULT 'Un cabinet à la hauteur de vos enjeux',
   hero_subtitle TEXT NOT NULL DEFAULT 'Nous défendons vos intérêts avec rigueur, transparence et engagement — à chaque étape de votre dossier.',
   contact_email TEXT NOT NULL DEFAULT 'tshibambabenoni@gmail.com',
-  contact_phone TEXT NOT NULL DEFAULT '',
+  contact_phone TEXT NOT NULL DEFAULT '+1 (438) 454-3171',
   address TEXT NOT NULL DEFAULT '123, rue du Cabinet, Montréal, Québec',
   address_street TEXT NOT NULL DEFAULT 'Avenue Lukusa n°50, Immeuble L''Horizon, Suite 203',
   address_city TEXT NOT NULL DEFAULT 'Kinshasa',
@@ -333,6 +333,13 @@ CREATE TABLE IF NOT EXISTS site_settings (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS authors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  photo_filename TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS blog_posts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   slug TEXT NOT NULL UNIQUE,
@@ -341,7 +348,8 @@ CREATE TABLE IF NOT EXISTS blog_posts (
   content_html TEXT NOT NULL DEFAULT '',
   cover_filename TEXT,
   cover_mime TEXT,
-  author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  owner_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  author_id INTEGER REFERENCES authors(id) ON DELETE SET NULL,
   status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft','published')),
   published_at TEXT,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

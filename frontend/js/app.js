@@ -61,6 +61,10 @@ const PATHS = {
   listNumbered: 'M10 6h10M10 12h10M10 18h10M4 5.5 6 6v1M4 11.5 6 12v1M4 17.5 6 18v1',
   quote: 'M8 6C5 8 4 10 4 13v5h6v-6H6.5C6.5 10 7 9 8 8.5zM18 6c-3 2-4 4-4 7v5h6v-6h-3.5c0-2 .5-3 1.5-3.5z',
   linkIcon: 'M10 14a4 4 0 0 0 6 0l2.5-2.5a4 4 0 0 0-5.7-5.7L11.5 7M14 10a4 4 0 0 0-6 0l-2.5 2.5a4 4 0 0 0 5.7 5.7L12.5 17',
+  unlinkIcon: 'M10 14a4 4 0 0 0 6 0l2.5-2.5a4 4 0 0 0-5.7-5.7L11.5 7M14 10a4 4 0 0 0-6 0l-2.5 2.5a4 4 0 0 0 5.7 5.7L12.5 17M4 4l16 16',
+  indentInc: 'M3 6h11M3 12h11M3 18h11M15 9l5 3-5 3',
+  indentDec: 'M10 6h11M10 12h11M10 18h11M8 9 3 12l5 3',
+  hrIcon: 'M4 12h16M7 8v8M17 8v8',
   imageIcon: 'M4 5h16v14H4zM4 16l4.5-4.5 3.5 3.5 3-3L20 17M9.5 10a1.5 1.5 0 1 0 0-.01',
   clearFormat: 'M6 20 12 4l6 16M8.5 14h7M4 4l16 16',
 };
@@ -404,6 +408,21 @@ const api = {
     return request(`/blog/${id}`, { method: 'PUT', body: form, isForm: true });
   },
   deleteBlogPost: (id) => request(`/blog/${id}`, { method: 'DELETE' }),
+  authors: () => request('/blog/authors'),
+  createAuthor: (name, photoFile) => {
+    const form = new FormData();
+    form.append('name', name);
+    if (photoFile) form.append('photo', photoFile);
+    return request('/blog/authors', { method: 'POST', body: form, isForm: true });
+  },
+  updateAuthor: (id, name, photoFile, removePhoto = false) => {
+    const form = new FormData();
+    if (name != null) form.append('name', name);
+    if (photoFile) form.append('photo', photoFile);
+    if (removePhoto) form.append('removePhoto', 'true');
+    return request(`/blog/authors/${id}`, { method: 'PUT', body: form, isForm: true });
+  },
+  deleteAuthor: (id) => request(`/blog/authors/${id}`, { method: 'DELETE' }),
   generateBlogPost: (body) => request('/blog/ai-generate', { method: 'POST', body }),
   uploadBlogImage: (file) => {
     const form = new FormData();
@@ -579,7 +598,12 @@ function aboutPhotoUrl() {
  */
 function addressLines(s) {
   const street = (s.addressStreet || '').trim();
-  const cityProv = [s.addressCity, s.addressProvince].map((x) => (x || '').trim()).filter(Boolean).join(' ');
+  const city = (s.addressCity || '').trim();
+  const prov = (s.addressProvince || '').trim();
+  // Évite "Kinshasa Kinshasa" quand ville et province sont identiques.
+  const cityProv = (prov && prov.toLowerCase() !== city.toLowerCase())
+    ? `${city} ${prov}`.trim()
+    : city;
   const postal = (s.addressPostal || '').trim();
   const line2 = [cityProv, postal].filter(Boolean).join('  ');
   const country = (s.addressCountry || '').trim();
@@ -809,6 +833,7 @@ function publicChrome(loggedUser, s, areas, contactEmail, contactPhone, addressT
   const navMain = [
     h('button', { class: 'public-nav-link', type: 'button', onclick: () => scrollToId('accueil') }, t('navHome')),
     h('button', { class: 'public-nav-link', type: 'button', onclick: () => scrollToId('apropos') }, t('navAbout')),
+    h('a', { class: 'public-nav-link', href: '/blog' }, t('navBlog')),
     navDropdown(t('navPractice'), areas.length
       ? areas.map((a) => dropLink(a.title, () => scrollToId('domaines')))
       : [dropLink(t('navPractice'), () => scrollToId('domaines'))]),
@@ -817,7 +842,6 @@ function publicChrome(loggedUser, s, areas, contactEmail, contactPhone, addressT
       dropLink(t('svcClientSpace'), () => { location.hash = '#/login'; }),
       dropLink(t('svcWebApp'), () => { location.hash = '#/web-app'; }),
     ]),
-    h('a', { class: 'public-nav-link', href: '/blog' }, t('navBlog')),
     h('button', { class: 'public-nav-link', type: 'button', onclick: () => scrollToId('contact') }, t('navContact')),
   ];
 
@@ -837,7 +861,7 @@ function publicChrome(loggedUser, s, areas, contactEmail, contactPhone, addressT
       ]
     : [
         h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { location.hash = '#/login'; } }, t('seConnecter')),
-        h('button', { class: 'btn btn-primary login-top-btn', type: 'button', onclick: openRegistrationModal }, t('landDemo')),
+        h('button', { class: 'btn btn-primary login-top-btn', type: 'button', onclick: openRegistrationModal }, t('demanderAcces')),
       ];
 
   // Tiroir mobile (fond navy, liens centrés, contact + langue en bas).
@@ -852,9 +876,9 @@ function publicChrome(loggedUser, s, areas, contactEmail, contactPhone, addressT
     h('nav', { class: 'drawer-nav' },
       h('button', { type: 'button', onclick: goDrawer(() => scrollToId('accueil')) }, t('navHome')),
       h('button', { type: 'button', onclick: goDrawer(() => scrollToId('apropos')) }, t('navAbout')),
+      h('a', { href: '/blog', onclick: closeDrawer }, t('navBlog')),
       h('button', { type: 'button', onclick: goDrawer(() => scrollToId('domaines')) }, t('navPractice')),
       h('button', { type: 'button', onclick: goDrawer(() => scrollToId('contact')) }, t('svcConsultation')),
-      h('a', { href: '/blog', onclick: closeDrawer }, t('navBlog')),
       h('button', { type: 'button', onclick: goDrawer(() => scrollToId('contact')) }, t('navContact')),
       h('button', { type: 'button', onclick: goDrawer(() => { location.hash = '#/web-app'; }) }, t('svcWebApp')),
       h('button', { type: 'button', onclick: goDrawer(() => { location.hash = '#/login'; }) }, t('seConnecter')),
@@ -880,8 +904,8 @@ function publicChrome(loggedUser, s, areas, contactEmail, contactPhone, addressT
   const footerNav = [
     h('button', { class: 'link-btn', type: 'button', onclick: () => scrollToId('accueil') }, t('navHome')),
     h('button', { class: 'link-btn', type: 'button', onclick: () => scrollToId('apropos') }, t('navAbout')),
-    h('button', { class: 'link-btn', type: 'button', onclick: () => scrollToId('domaines') }, t('navPractice')),
     h('a', { class: 'link-btn', href: '/blog' }, t('navBlog')),
+    h('button', { class: 'link-btn', type: 'button', onclick: () => scrollToId('domaines') }, t('navPractice')),
     h('a', { class: 'link-btn', href: '#/web-app' }, t('svcWebApp')),
     h('button', { class: 'link-btn', type: 'button', onclick: () => scrollToId('contact') }, t('navContact')),
   ];
@@ -900,7 +924,7 @@ function publicChrome(loggedUser, s, areas, contactEmail, contactPhone, addressT
         h('p', { class: 'muted' }, addressText),
         h('p', { class: 'muted' }, `${contactPhone} · ${contactEmail}`),
         loggedUser
-          ? h('button', { class: 'link-btn', type: 'button', onclick: logout }, t('seDeconnecter'))
+          ? h('button', { class: 'link-btn', type: 'button', onclick: () => { location.hash = '#/dashboard'; } }, t('monEspace'))
           : h('button', { class: 'link-btn', type: 'button', onclick: () => { location.hash = '#/login'; } }, t('seConnecter')),
       )
     ),
@@ -1026,7 +1050,7 @@ async function renderPublicHome(loggedUser = null) {
   const hero = heroSection;
   if (heroImgs.length > 1) startHeroSlideshow(heroSection);
 
-  const aboutPhoto = aboutPhotoUrl() ? h('img', { class: 'about-photo', src: aboutPhotoUrl(), alt: '' }) : null;
+  const aboutPhoto = aboutPhotoUrl() ? h('div', { class: 'about-media' }, h('img', { class: 'about-photo', src: aboutPhotoUrl(), alt: '' })) : null;
   const aboutSection = h('section', { class: 'public-section', id: 'apropos' },
     h('div', { class: 'public-section-head' },
       h('div', null,
@@ -1039,6 +1063,14 @@ async function renderPublicHome(loggedUser = null) {
       h('div', { class: 'about-body' },
         h('h3', null, s.aboutTitle || firmName()),
         h('p', null, s.aboutText || t('landAboutDefault')),
+        areas.length ? h('p', { class: 'about-areas-label' }, t('aboutAreasLabel')) : null,
+        areas.length ? h('div', { class: 'about-chip-row' },
+          ...areas.slice(0, 6).map((a) => h('button', { type: 'button', class: 'about-chip', onclick: () => scrollToId('domaines') }, a.title))
+        ) : null,
+        h('div', { class: 'about-cta-row' },
+          h('button', { class: 'btn btn-primary', type: 'button', onclick: () => scrollToId('contact') }, t('aboutCtaContact')),
+          h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => scrollToId('domaines') }, t('aboutCtaAreas')),
+        ),
       ),
     ),
     stats.length ? h('dl', { class: 'stats-band' },
@@ -1096,6 +1128,7 @@ async function renderPublicHome(loggedUser = null) {
         h('div', { class: 'blog-preview-body' },
           h('p', { class: 'muted blog-preview-date' }, fmtDate(p.publishedAt)),
           h('h3', null, h('a', { href: `/blog/${p.slug}` }, p.title)),
+          h('p', { class: 'blog-preview-byline' }, authorBylineEl(p.author)),
           p.excerpt ? h('p', { class: 'muted' }, p.excerpt) : null,
           h('a', { class: 'link-btn', href: `/blog/${p.slug}` }, t('landBlogReadMore')),
         ))))
@@ -1242,8 +1275,8 @@ async function renderWebAppPage(loggedUser = null) {
 
   const ctaBand = h('section', { class: 'public-cta' },
     h('div', { class: 'public-cta-inner' },
-      h('h2', null, s.ctaTitle || t('landCtaTitle')),
-      h('p', null, s.ctaText || t('landCtaText')),
+      h('h2', null, s.ctaTitle || t('webAppCtaTitle')),
+      h('p', null, s.ctaText || t('webAppCtaText')),
       h('button', { class: 'btn btn-primary btn-large', type: 'button', onclick: openRegistrationModal }, s.ctaButton || t('landDemo')),
     )
   );
@@ -2780,10 +2813,47 @@ function mountChatWidget(mode = 'staff') {
   const msgs = h('div', { class: 'cej-chat-msgs', role: 'log', 'aria-live': 'polite' });
   const input = h('input', { type: 'text', class: 'cej-chat-input', placeholder: t(isPublic ? 'chatPublicPlaceholder' : 'chatPlaceholder'), 'aria-label': t('chatTitle'), maxlength: 5000 });
   const sendBtn = h('button', { class: 'cej-chat-send', type: 'button' }, t('chatSend'));
+
+  /* --- Persistance locale : la conversation survit au changement de page --- */
+  const HIST_MAX = 60;
+  const storeKey = () => `cej:chat:${mode}:${getLang()}`;
+  const loadHist = () => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(storeKey()) ?? '[]');
+      if (!Array.isArray(raw)) return [];
+      return raw.filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.text === 'string').slice(-HIST_MAX);
+    } catch { return []; }
+  };
+  let hist = [];
+  const saveHist = () => { try { localStorage.setItem(storeKey(), JSON.stringify(hist.slice(-HIST_MAX))); } catch { /* quota : on ignore */ } };
+  const pushHist = (role, text) => { hist.push({ role, text }); saveHist(); };
+
+  const renderMsg = (role, text, cls = '') => {
+    const d = h('div', { class: `cej-chat-msg ${role}${cls ? ` ${cls}` : ''}` }, h('p', null, text));
+    msgs.append(d);
+    msgs.scrollTop = msgs.scrollHeight;
+    return d;
+  };
+  const clearHist = () => {
+    hist = [];
+    try { localStorage.removeItem(storeKey()); } catch { /* noop */ }
+    clear(msgs);
+    msgs.scrollTop = 0;
+  };
+
+  const clearBtn = h('button', {
+    class: 'cej-chat-clear', type: 'button', title: t('chatClear'), 'aria-label': t('chatClear'),
+    onclick: () => {
+      clearHist();
+      renderMsg('assistant', t(isPublic ? 'chatPublicWelcome' : 'chatWelcome'));
+      pushHist('assistant', t(isPublic ? 'chatPublicWelcome' : 'chatWelcome'));
+    },
+  }, '↺');
   const panel = h('div', { class: 'cej-chat-panel', hidden: true },
     h('div', { class: 'cej-chat-head' },
       h('span', { class: 'cej-chat-title' }, t('chatTitle')),
-      h('button', { class: 'cej-chat-close', type: 'button', 'aria-label': '×', onclick: () => toggleChat(false) }, '×')),
+      h('span', { class: 'cej-chat-head-actions' }, clearBtn,
+        h('button', { class: 'cej-chat-close', type: 'button', 'aria-label': '×', onclick: () => toggleChat(false) }, '×'))),
     msgs,
     h('div', { class: 'cej-chat-form' }, input, sendBtn));
   const bubble = h('button', { class: 'cej-chat-bubble', type: 'button', 'aria-label': t('chatTitle'), 'aria-expanded': 'false', onclick: () => toggleChat() });
@@ -2797,16 +2867,16 @@ function mountChatWidget(mode = 'staff') {
     if (!q || sending) return;
     sending = true;
     input.value = '';
-    msgs.append(h('div', { class: 'cej-chat-msg user' }, h('p', null, q)));
-    const typing = h('div', { class: 'cej-chat-msg assistant typing' }, h('p', null, t('chatTyping')));
-    msgs.append(typing);
-    msgs.scrollTop = msgs.scrollHeight;
+    renderMsg('user', q);
+    pushHist('user', q);
+    const typing = renderMsg('assistant', t('chatTyping'), 'typing');
     try {
       const r = isPublic
         ? await api.publicChat(q, getLang())
         : await api.askAI(q, undefined, getLang());
       typing.remove();
-      msgs.append(h('div', { class: 'cej-chat-msg assistant' }, h('p', null, r.answer)));
+      renderMsg('assistant', r.answer);
+      pushHist('assistant', r.answer);
       if (!isPublic && (r.sources || []).length) {
         msgs.append(h('div', { class: 'cej-chat-sources' },
           h('span', { class: 'cej-chat-sources-label' }, `${t('chatSources')} :`),
@@ -2814,7 +2884,9 @@ function mountChatWidget(mode = 'staff') {
       }
     } catch (err) {
       typing.remove();
-      msgs.append(h('div', { class: 'cej-chat-msg assistant error' }, h('p', null, errorMessage(err))));
+      const msg = errorMessage(err);
+      renderMsg('assistant', msg, 'error');
+      pushHist('assistant', msg);
     }
     sending = false;
     msgs.scrollTop = msgs.scrollHeight;
@@ -2829,26 +2901,26 @@ function mountChatWidget(mode = 'staff') {
     if (open && chatBootedFor !== getLang()) {
       chatBootedFor = getLang();
       clear(msgs);
-      if (isPublic) {
+      hist = loadHist();
+      for (const m of hist) renderMsg(m.role, m.text);
+      if (!hist.length) {
         // Visiteurs publics : pas de vérification de statut (endpoint sans auth).
         input.disabled = false;
         sendBtn.disabled = false;
-        msgs.append(h('div', { class: 'cej-chat-msg assistant' }, h('p', null, t('chatPublicWelcome'))));
-      } else {
-      try {
-        const status = await api.aiStatus();
-        if (!status.configured) {
-          msgs.append(h('div', { class: 'cej-chat-msg assistant' }, h('p', null, t('aiNotReady'))));
-          input.disabled = true;
-          sendBtn.disabled = true;
-        } else {
-          input.disabled = false;
-          sendBtn.disabled = false;
-          msgs.append(h('div', { class: 'cej-chat-msg assistant' }, h('p', null, t('chatWelcome'))));
+        const welcome = t(isPublic ? 'chatPublicWelcome' : 'chatWelcome');
+        renderMsg('assistant', welcome);
+        pushHist('assistant', welcome);
+      } else if (!isPublic) {
+        try {
+          const status = await api.aiStatus();
+          if (!status.configured) {
+            renderMsg('assistant', t('aiNotReady'), 'error');
+            input.disabled = true;
+            sendBtn.disabled = true;
+          } else { input.disabled = false; sendBtn.disabled = false; }
+        } catch (err) {
+          renderMsg('assistant', errorMessage(err), 'error');
         }
-      } catch (err) {
-        msgs.append(h('div', { class: 'cej-chat-msg assistant error' }, h('p', null, errorMessage(err))));
-      }
       }
     }
     if (open) setTimeout(() => input.focus(), 60);
@@ -5456,14 +5528,54 @@ function buildRichEditor(initialHtml) {
   });
   area.innerHTML = initialHtml || '';
 
+  /* Le curseur sautait au début du paragraphe à chaque mise en forme parce que
+   * normalizeRte reconstruit des nœuds du DOM. On marque la position du curseur
+   * avant la mutation et on la restaure juste après. */
+  const withCursor = (fn) => {
+    const sel = document.getSelection();
+    let saved = null;
+    let marker = null;
+    if (sel && sel.rangeCount > 0) {
+      const r0 = sel.getRangeAt(0);
+      if (area.contains(r0.commonAncestorContainer)) {
+        saved = r0.cloneRange();
+        if (r0.collapsed) {
+          marker = document.createElement('span');
+          marker.setAttribute('data-rte-cursor', '1');
+          saved.insertNode(marker);
+        }
+      }
+    }
+    fn();
+    const m = marker ? area.querySelector('[data-rte-cursor]') : null;
+    if (m && sel) {
+      const r = document.createRange();
+      r.setStartAfter(m);
+      r.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(r);
+      m.remove();
+    } else if (saved && sel) {
+      try { sel.removeAllRanges(); sel.addRange(saved); } catch { /* DOM trop changé : on ignore */ }
+    }
+    area.focus();
+  };
+
   const exec = (cmd, arg = null) => {
     area.focus();
-    document.execCommand(cmd, false, arg);
-    normalizeRte(area);
+    withCursor(() => {
+      document.execCommand(cmd, false, arg);
+      normalizeRte(area);
+    });
     syncStates();
   };
 
-  const group = (...kids) => h('span', { class: 'rte-group' }, ...kids);
+  /* Une section du menu vertical : titre + contrôles. */
+  const section = (labelKey, ...kids) => h('section', { class: 'rte-sec' },
+    h('h4', { class: 'rte-sec-title' }, t(labelKey)),
+    h('div', { class: 'rte-sec-body' }, ...kids));
+  const btnRow = (...kids) => h('div', { class: 'rte-btnrow' }, ...kids);
+  const sideLabel = (labelKey) => h('div', { class: 'rte-label' }, t(labelKey));
   const btn = (inner, title, onclick, cmdName = null) => {
     const b = h('button', {
       class: 'rte-btn', type: 'button', title, 'aria-label': title,
@@ -5505,26 +5617,29 @@ function buildRichEditor(initialHtml) {
       const px = sizeSel.value;
       sizeSel.selectedIndex = 0;
       area.focus();
-      // fontSize=7 produit <font size="7">, converti aussitôt en <span style>.
-      document.execCommand('fontSize', false, '7');
-      area.querySelectorAll('font[size="7"]').forEach((el) => {
-        const span = document.createElement('span');
-        span.style.fontSize = px;
-        span.innerHTML = el.innerHTML;
-        el.replaceWith(span);
+      withCursor(() => {
+        // fontSize=7 produit <font size="7">, converti aussitôt en <span style>.
+        document.execCommand('fontSize', false, '7');
+        area.querySelectorAll('font[size="7"]').forEach((el) => {
+          const span = document.createElement('span');
+          span.style.fontSize = px;
+          span.innerHTML = el.innerHTML;
+          el.replaceWith(span);
+        });
+        normalizeRte(area);
       });
       syncStates();
     },
   }, h('option', { value: '' }, t('rteSize')), ...RTE_SIZES.map((s) => h('option', { value: s.px }, t(s.key))));
 
-  // --- Couleurs : pastilles prédéfinies + sélecteur libre
+  // --- Couleurs : pastilles prédéfinies + sélecteur libre (retourne la liste des contrôles)
   const colorRow = (colors, title, apply) => {
     const custom = h('input', {
       class: 'rte-color', type: 'color', title: `${title} (${t('rteCustom')})`, 'aria-label': `${title} (${t('rteCustom')})`,
       onmousedown: (e) => e.stopPropagation(),
       onchange: () => apply(custom.value),
     });
-    return group(
+    return [
       ...colors.map((c) => h('button', {
         class: 'rte-swatch', type: 'button', title: `${title} — ${c}`, 'aria-label': `${title} — ${c}`,
         style: `background:${c}`,
@@ -5532,7 +5647,7 @@ function buildRichEditor(initialHtml) {
         onclick: () => apply(c),
       })),
       custom,
-    );
+    ];
   };
 
   // --- Barre d'outils flottante des images
@@ -5609,52 +5724,100 @@ function buildRichEditor(initialHtml) {
     document.execCommand('insertHTML', false, `<img src="${url.trim().replace(/"/g, '')}" alt="" class="img-full">`);
   };
 
-  const toolbar = h('div', { class: 'rte-toolbar', role: 'toolbar', 'aria-label': t('blogContent') },
-    group(blockSel, fontSel, sizeSel),
-    group(
-      btn(h('b', null, 'B'), t('rteBold'), () => exec('bold'), 'bold'),
-      btn(h('i', null, 'I'), t('rteItalic'), () => exec('italic'), 'italic'),
-      btn(h('u', null, 'U'), t('rteUnderline'), () => exec('underline'), 'underline'),
-      btn(h('s', null, 'S'), t('rteStrike'), () => exec('strikeThrough'), 'strikeThrough'),
+  /* Menu vertical à gauche : toutes les options de mise en forme, par section. */
+  const side = h('aside', { class: 'rte-side', role: 'toolbar', 'aria-label': t('blogContent') },
+    section('rteSecText',
+      sideLabel('rteBlock'), blockSel,
+      sideLabel('rteFont'), fontSel,
+      sideLabel('rteSize'), sizeSel,
+      btnRow(
+        btn(h('b', null, 'B'), t('rteBold'), () => exec('bold'), 'bold'),
+        btn(h('i', null, 'I'), t('rteItalic'), () => exec('italic'), 'italic'),
+        btn(h('u', null, 'U'), t('rteUnderline'), () => exec('underline'), 'underline'),
+        btn(h('s', null, 'S'), t('rteStrike'), () => exec('strikeThrough'), 'strikeThrough'),
+        btn(h('span', { class: 'rte-supsub' }, 'x₂'), t('rteSub'), () => exec('subscript'), 'subscript'),
+        btn(h('span', { class: 'rte-supsub' }, 'x²'), t('rteSup'), () => exec('superscript'), 'superscript'),
+      ),
+      sideLabel('rteTextColor'),
+      btnRow(...colorRow(RTE_TEXT_COLORS, t('rteTextColor'), (c) => exec('foreColor', c))),
+      sideLabel('rteHighlight'),
+      btnRow(...colorRow(RTE_HL_COLORS, t('rteHighlight'), (c) => exec('hiliteColor', c))),
     ),
-    colorRow(RTE_TEXT_COLORS, t('rteTextColor'), (c) => exec('foreColor', c)),
-    colorRow(RTE_HL_COLORS, t('rteHighlight'), (c) => exec('hiliteColor', c)),
-    group(
-      btn(icon('alignLeft'), t('rteAlignLeft'), () => exec('justifyLeft')),
-      btn(icon('alignCenter'), t('rteAlignCenter'), () => exec('justifyCenter')),
-      btn(icon('alignRight'), t('rteAlignRight'), () => exec('justifyRight')),
-      btn(icon('alignJustify'), t('rteAlignJustify'), () => exec('justifyFull')),
+    section('rteSecParagraph',
+      btnRow(
+        btn(icon('alignLeft'), t('rteAlignLeft'), () => exec('justifyLeft')),
+        btn(icon('alignCenter'), t('rteAlignCenter'), () => exec('justifyCenter')),
+        btn(icon('alignRight'), t('rteAlignRight'), () => exec('justifyRight')),
+        btn(icon('alignJustify'), t('rteAlignJustify'), () => exec('justifyFull')),
+      ),
+      btnRow(
+        btn(icon('listBullet'), t('rteBullet'), () => exec('insertUnorderedList')),
+        btn(icon('listNumbered'), t('rteNumbered'), () => exec('insertOrderedList')),
+        btn(icon('quote'), t('rteQuote'), () => exec('formatBlock', 'blockquote')),
+      ),
+      btnRow(
+        btn(icon('indentDec'), t('rteOutdent'), () => exec('outdent')),
+        btn(icon('indentInc'), t('rteIndent'), () => exec('indent')),
+      ),
     ),
-    group(
-      btn(icon('listBullet'), t('rteBullet'), () => exec('insertUnorderedList')),
-      btn(icon('listNumbered'), t('rteNumbered'), () => exec('insertOrderedList')),
-      btn(icon('quote'), t('rteQuote'), () => exec('formatBlock', 'blockquote')),
+    section('rteSecInsert',
+      btnRow(
+        btn(icon('linkIcon'), t('rteLink'), () => {
+          const url = prompt(t('rteLinkPrompt'), 'https://');
+          if (!url || !url.trim()) return;
+          const clean = url.trim();
+          const full = /^(https?:\/\/|mailto:|#)/i.test(clean) ? clean : `https://${clean}`;
+          exec('createLink', full);
+        }),
+        btn(icon('unlinkIcon'), t('rteUnlink'), () => exec('unlink')),
+        btn(icon('imageIcon'), t('rteImageUpload'), () => imgFileInput.click()),
+        btn(icon('imageIcon'), t('rteImageUrl'), insertImageUrl),
+        btn(icon('hrIcon'), t('rteHr'), () => exec('insertHorizontalRule')),
+      ),
     ),
-    group(
-      btn(icon('linkIcon'), t('rteLink'), () => {
-        const url = prompt(t('rteLinkPrompt'), 'https://');
-        if (!url || !url.trim()) return;
-        const clean = url.trim();
-        const full = /^(https?:\/\/|mailto:|#)/i.test(clean) ? clean : `https://${clean}`;
-        exec('createLink', full);
-      }),
-      btn(icon('imageIcon'), t('rteImageUpload'), () => imgFileInput.click()),
-      btn(icon('imageIcon'), t('rteImageUrl'), insertImageUrl),
-    ),
-    group(
-      btn(icon('clearFormat'), t('rteClear'), () => exec('removeFormat')),
+    section('rteSecTools',
+      btnRow(
+        btn(icon('clearFormat'), t('rteClear'), () => exec('removeFormat')),
+      ),
     ),
   );
 
-  wrap.append(toolbar, area, imgBar, imgFileInput);
+  const main = h('div', { class: 'rte-main' }, area, imgBar, imgFileInput);
+  wrap.append(h('div', { class: 'rte-layout' }, side, main));
   return { wrap, getHtml: () => { normalizeRte(area); hideImgBar(); return area.innerHTML; }, setHtml: (html) => { area.innerHTML = html || ''; } };
+}
+
+/** Initiales pour le cercle de repli du byline (ex. « Benoni Tshibamba » → « BT »). */
+function authorInitials(name) {
+  return String(name || '').trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase() || '?';
+}
+
+/** Byline d'article : photo ronde de l'auteur (ou cercle d'initiales), sinon « Admin ». */
+function authorBylineEl(author) {
+  if (!author?.name) return h('span', null, 'Admin');
+  const face = author.photoUrl
+    ? h('img', { class: 'byline-photo', src: mediaUrl(author.photoUrl), alt: '' })
+    : h('span', { class: 'byline-initials' }, authorInitials(author.name));
+  return h('span', { class: 'byline' }, face, h('span', null, author.name));
 }
 
 function openBlogEditor(existing = null, refresh) {
   const f = {
     title: h('input', { required: true, value: existing?.title || '', placeholder: t('blogTitlePh') }),
     excerpt: h('textarea', { rows: 2, maxlength: 500, placeholder: t('blogExcerptPh') }, existing?.excerpt || ''),
+    author: h('select', null, h('option', { value: '' }, t('loading'))),
   };
+  // Auteurs : chargés async, présélection de l'auteur actuel (ou du premier pour un nouvel article).
+  let authorsLoaded = false;
+  api.authors().then((authors) => {
+    clear(f.author);
+    f.author.append(h('option', { value: '' }, `— ${t('blogAuthorNone')} —`));
+    for (const a of authors ?? []) {
+      f.author.append(h('option', { value: String(a.id), selected: existing?.author?.id === a.id }, a.name));
+    }
+    if (!existing?.author?.id && (authors ?? []).length && !f.author.value) f.author.value = String(authors[0].id);
+    authorsLoaded = true;
+  }).catch(() => { clear(f.author).append(h('option', { value: '' }, `— ${t('blogAuthorNone')} —`)); });
   const editor = buildRichEditor(existing?.content_html || '');
   let coverFile = null;
   const coverPreview = h('div', { class: 'post-thumbs', hidden: !existing?.coverUrl },
@@ -5672,6 +5835,8 @@ function openBlogEditor(existing = null, refresh) {
     errorBox.hidden = true;
     try {
       const body = { title: f.title.value.trim(), excerpt: f.excerpt.value.trim(), content_html: editor.getHtml(), status };
+      // N'écrase l'auteur que si la liste des auteurs a bien été chargée.
+      if (authorsLoaded) body.author_id = f.author.value ? Number(f.author.value) : null;
       if (existing) await api.updateBlogPost(existing.id, body, coverFile);
       else await api.createBlogPost(body, coverFile);
       close();
@@ -5714,6 +5879,7 @@ function openBlogEditor(existing = null, refresh) {
   };
   const form = h('form', { class: 'stacked-form', onsubmit: (e) => { e.preventDefault(); save(existing?.status === 'published' ? 'published' : 'draft'); } },
     field(t('blogTitle'), f.title),
+    field(t('blogAuthor'), f.author),
     field(t('blogExcerpt'), f.excerpt),
     field(t('blogContent'), editor.wrap),
     field(t('blogCover'), coverInput), coverPreview,
@@ -5723,6 +5889,73 @@ function openBlogEditor(existing = null, refresh) {
       h('button', { class: 'btn btn-secondary', type: 'submit' }, t('blogSaveDraft')),
       h('button', { class: 'btn btn-primary', type: 'button', onclick: () => save('published') }, t('blogPublish'))));
   const close = openModal(existing ? t('blogEdit') : t('blogNew'), form, { wide: true });
+}
+
+
+/** Gestion des auteurs d'articles (byline avec photo) dans la section blog. */
+async function openAuthorsManager(refreshBlog) {
+  const list = h('div', null);
+  const errorBox = h('p', { class: 'form-error', hidden: true });
+  const load = async () => {
+    errorBox.hidden = true;
+    clear(list).append(h('p', { class: 'loading' }, t('loading')));
+    const authors = await guarded(() => api.authors(), { onError: (m) => { errorBox.textContent = m; errorBox.hidden = false; } });
+    clear(list);
+    if (!authors?.length) { list.append(h('p', { class: 'empty-state' }, t('blogAuthorsEmpty'))); return; }
+    for (const a of authors) {
+      const face = a.photoUrl
+        ? h('img', { class: 'byline-photo', src: mediaUrl(a.photoUrl), alt: '' })
+        : h('span', { class: 'byline-initials' }, authorInitials(a.name));
+      const row = h('div', { class: 'author-row' }, face,
+        h('span', { class: 'author-row-name' }, a.name),
+        h('span', { class: 'author-row-actions' },
+          h('button', { class: 'btn btn-small', type: 'button', onclick: () => openAuthorEditor(a, load) }, t('edit')),
+          h('button', { class: 'btn btn-small danger', type: 'button', onclick: async () => {
+            if (!confirm(t('blogAuthorDeleteConfirm'))) return;
+            await guarded(() => api.deleteAuthor(a.id), { onError: (m) => { errorBox.textContent = m; errorBox.hidden = false; } });
+            await load(); refreshBlog?.();
+          } }, t('delete'))));
+      list.append(row);
+    }
+  };
+  const addBtn = h('button', { class: 'btn btn-primary', type: 'button', onclick: () => openAuthorEditor(null, load) }, icon('plus'), t('blogAuthorNew'));
+  openModal(t('blogAuthors'), h('div', { class: 'stacked-form' }, errorBox, list, addBtn));
+  await load();
+}
+
+/** Création / édition d'un auteur (nom + photo). */
+function openAuthorEditor(existing, refresh) {
+  const name = h('input', { required: true, maxlength: 120, value: existing?.name || '', placeholder: t('blogAuthorNamePh') });
+  let photoFile = null;
+  let removePhoto = false;
+  const preview = h('div', { class: 'post-thumbs', hidden: !existing?.photoUrl },
+    existing?.photoUrl ? h('div', { class: 'post-thumb' }, h('img', { src: mediaUrl(existing.photoUrl), alt: '' })) : null);
+  const photoInput = h('input', {
+    type: 'file', accept: 'image/png,image/jpeg,image/gif,image/webp', onchange: () => {
+      photoFile = photoInput.files[0] || null;
+      removePhoto = false;
+      clear(preview);
+      if (photoFile) preview.append(h('div', { class: 'post-thumb' }, h('img', { src: URL.createObjectURL(photoFile), alt: '' })));
+      preview.hidden = !photoFile && !existing?.photoUrl;
+    },
+  });
+  const removeBtn = existing?.photoUrl
+    ? h('button', { class: 'btn btn-small danger', type: 'button', onclick: () => { removePhoto = true; photoFile = null; photoInput.value = ''; clear(preview); preview.hidden = true; } }, t('blogAuthorPhotoRemove'))
+    : null;
+  const errorBox = h('p', { class: 'form-error', hidden: true });
+  const form = h('form', { class: 'stacked-form', onsubmit: async (e) => {
+    e.preventDefault();
+    errorBox.hidden = true;
+    const done = await guarded(() => existing
+      ? api.updateAuthor(existing.id, name.value.trim(), photoFile, removePhoto)
+      : api.createAuthor(name.value.trim(), photoFile),
+      { onError: (m) => { errorBox.textContent = m; errorBox.hidden = false; } });
+    if (done !== undefined) { close(); refresh(); }
+  } },
+    field(t('blogAuthorName'), name),
+    field(t('blogAuthorPhoto'), photoInput), preview, removeBtn, errorBox,
+    h('button', { class: 'btn btn-primary', type: 'submit' }, t('save')));
+  const close = openModal(existing ? t('blogAuthorEdit') : t('blogAuthorNew'), form);
 }
 
 
@@ -5749,7 +5982,7 @@ async function viewBlog(main) {
           h('div', { class: 'blog-row-head' },
             h('h3', null, b.title),
             h('span', { class: `badge ${b.status === 'published' ? 'badge-ok' : ''}` }, b.status === 'published' ? t('blogStatusPublished') : t('blogStatusDraft'))),
-          h('p', { class: 'muted' }, `/${b.slug} · ${b.author.firstName} ${b.author.lastName} · ${fmtDateTime(b.updatedAt)}`),
+          h('p', { class: 'blog-row-meta' }, `/${b.slug} · `, authorBylineEl(b.author), ` · ${fmtDateTime(b.updatedAt)}`),
           b.excerpt ? h('p', { class: 'blog-row-excerpt' }, b.excerpt) : null,
           actions)));
     }
@@ -5759,10 +5992,11 @@ async function viewBlog(main) {
     tabs.append(h('button', { class: `btn btn-secondary${v === tab ? ' is-active' : ''}`, type: 'button', dataset: { tab: v }, onclick: () => setTab(v) }, label));
   }
   const newBtn = h('button', { class: 'btn btn-primary', type: 'button', onclick: () => openBlogEditor(null, load) }, icon('plus'), t('blogNew'));
+  const authorsBtn = h('button', { class: 'btn btn-secondary', type: 'button', onclick: () => openAuthorsManager(load) }, t('blogAuthors'));
   const viewPublic = h('a', { class: 'btn btn-secondary', href: '/blog', target: '_blank', rel: 'noopener' }, t('blogViewBlog'));
   clear(main).append(
     h('div', { class: 'page' },
-      h('div', { class: 'page-head' }, h('h1', { tabindex: '-1' }, t('navBlog')), h('div', { class: 'page-actions' }, viewPublic, newBtn)),
+      h('div', { class: 'page-head' }, h('h1', { tabindex: '-1' }, t('navBlog')), h('div', { class: 'page-actions' }, viewPublic, authorsBtn, newBtn)),
       tabs, list),
   );
   await load();

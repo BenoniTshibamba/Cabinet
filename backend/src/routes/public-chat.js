@@ -24,6 +24,27 @@ const chatSchema = z.object({
   lang: z.enum(['fr', 'en']).optional().default('fr'),
 });
 
+/* Cache questions/réponses : les questions identiques (ex. visiteurs qui posent
+ * les mêmes questions d'accueil) reçoivent une réponse immédiate au lieu d'un
+ * nouvel aller-retour vers le LLM. TTL 1 h, 100 entrées max (FIFO). */
+const ANSWER_TTL_MS = 60 * 60 * 1000;
+const ANSWER_CACHE_MAX = 100;
+const answerCache = new Map(); // clé -> { answer, ts }
+const cacheKey = (lang, q) => `${lang}:${q.toLowerCase().replace(/\s+/g, ' ').trim()}`;
+function cacheGet(lang, q) {
+  const e = answerCache.get(cacheKey(lang, q));
+  if (!e) return null;
+  if (Date.now() - e.ts > ANSWER_TTL_MS) { answerCache.delete(cacheKey(lang, q)); return null; }
+  return e.answer;
+}
+function cacheSet(lang, q, answer) {
+  if (answerCache.size >= ANSWER_CACHE_MAX) {
+    const first = answerCache.keys().next().value;
+    if (first !== undefined) answerCache.delete(first);
+  }
+  answerCache.set(cacheKey(lang, q), { answer, ts: Date.now() });
+}
+
 const UNAVAILABLE = {
   fr: 'Bonjour ! Notre assistant est momentanément indisponible. N’hésitez pas à nous écrire via la page Contact et nous vous répondrons avec plaisir.',
   en: 'Hello! Our assistant is temporarily unavailable. Feel free to write to us via the Contact page and we’ll be happy to get back to you.',
@@ -36,7 +57,7 @@ const ERROR_MSG = {
 
 function systemPrompt(lang) {
   return lang === 'en'
-    ? `You are the warm and friendly virtual assistant of Cabinet Élite Juridique, a law firm based in Montréal, Québec, Canada.
+    ? `You are the warm and friendly virtual assistant of Cabinet Élite Juridique, a law firm based in Kinshasa, Democratic Republic of Congo.
 
 Tone: welcoming, friendly, helpful, professional. Greet visitors warmly. Answer in English.
 
@@ -50,8 +71,9 @@ Strict rules:
 - NEVER invent facts, names, dates, amounts or articles of law.
 - NEVER give a definitive legal conclusion or personalized legal advice: always invite the visitor to contact the firm for their specific situation.
 - You have NO access to any internal data: no cases, no clients, no documents, no invoices. If asked about any of that, politely explain you cannot access internal files and redirect to the Contact page.
+- NEVER cite documents, files, PDFs or "sources": you have access to none, so any citation would be invented.
 - Keep answers concise (a few sentences), friendly, and in English.`
-    : `Tu es l’assistant virtuel chaleureux et accueillant du Cabinet Élite Juridique, un cabinet d’avocats basé à Montréal, Québec, Canada.
+    : `Tu es l’assistant virtuel chaleureux et accueillant du Cabinet Élite Juridique, un cabinet d’avocats basé à Kinshasa, en République démocratique du Congo.
 
 Ton : accueillant, amical, serviable, professionnel. Accueille les visiteurs avec chaleur. Réponds en français.
 
@@ -65,6 +87,7 @@ Règles strictes :
 - N’invente AUCUN fait, nom, date, montant ou article de loi.
 - Ne donne JAMAIS de conclusion juridique définitive ni de conseil juridique personnalisé : invite toujours le visiteur à contacter le cabinet pour sa situation particulière.
 - Tu n’as AUCUN accès aux données internes : ni dossiers, ni clients, ni documents, ni factures. Si on t’interroge là-dessus, explique poliment que tu ne peux pas accéder aux dossiers internes et redirige vers la page Contact.
+- Ne cite JAMAIS de documents, fichiers, PDF ou « sources » : tu n’y as pas accès, toute citation serait inventée.
 - Réponses concises (quelques phrases), amicales, en français.`;
 }
 
@@ -81,6 +104,8 @@ router.post('/', async (req, res, next) => {
     if (!llmStatus().available) {
       return res.json({ answer: UNAVAILABLE[b.lang] });
     }
+    const cached = cacheGet(b.lang, b.question);
+    if (cached) return res.json({ answer: cached });
     let answer;
     try {
       answer = await chat(
@@ -88,8 +113,9 @@ router.post('/', async (req, res, next) => {
           { role: 'system', content: systemPrompt(b.lang) },
           { role: 'user', content: b.question },
         ],
-        { maxTokens: 600, temperature: 0.7 },
+        { maxTokens: 400, temperature: 0.7 },
       );
+      cacheSet(b.lang, b.question, answer);
     } catch {
       return res.json({ answer: ERROR_MSG[b.lang] });
     }

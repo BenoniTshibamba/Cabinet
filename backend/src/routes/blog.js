@@ -13,15 +13,17 @@ const router = Router();
 
 export const BLOG_COVERS_DIR = join(resolve(process.env.UPLOAD_DIR ?? './uploads'), 'blog-covers');
 export const BLOG_IMAGES_DIR = join(resolve(process.env.UPLOAD_DIR ?? './uploads'), 'blog-images');
+export const AUTHOR_PHOTOS_DIR = join(resolve(process.env.UPLOAD_DIR ?? './uploads'), 'author-photos');
 mkdirSync(BLOG_COVERS_DIR, { recursive: true });
 mkdirSync(BLOG_IMAGES_DIR, { recursive: true });
+mkdirSync(AUTHOR_PHOTOS_DIR, { recursive: true });
 
 const ALLOWED_IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
 const MAX_IMAGE_SIZE = 8 * 1024 * 1024; // 8 Mo
-const imageUpload = (dest) => multer({
+const imageUpload = (dest, prefix = '') => multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, dest),
-    filename: (req, file, cb) => cb(null, `${crypto.randomUUID()}${extname(file.originalname).toLowerCase()}`),
+    filename: (req, file, cb) => cb(null, `${prefix}${crypto.randomUUID()}${extname(file.originalname).toLowerCase()}`),
   }),
   limits: { fileSize: MAX_IMAGE_SIZE },
   fileFilter: (req, file, cb) => {
@@ -32,6 +34,7 @@ const imageUpload = (dest) => multer({
 });
 const coverUpload = imageUpload(BLOG_COVERS_DIR);
 const bodyImageUpload = imageUpload(BLOG_IMAGES_DIR);
+const authorPhotoUpload = imageUpload(AUTHOR_PHOTOS_DIR, 'author-');
 const handleUpload = (up, field) => (req, res, next) => up.single(field)(req, res, (err) => {
   if (err instanceof multer.MulterError) return next(new HttpError(400, 'upload_error', err.code === 'LIMIT_FILE_SIZE' ? 'Image trop volumineuse (8 Mo max).' : err.message));
   if (err) return next(err);
@@ -39,6 +42,7 @@ const handleUpload = (up, field) => (req, res, next) => up.single(field)(req, re
 });
 
 const coverUrl = (b) => (b.cover_filename ? `/uploads/blog-covers/${b.cover_filename}` : null);
+const authorPhotoUrl = (a) => (a.photo_filename ? `/uploads/author-photos/${a.photo_filename}` : null);
 
 /* ------------------------------------------------------------------ */
 /* Nettoyage HTML (éditeur WYSIWYG) — liste blanche stricte.           */
@@ -159,6 +163,13 @@ export async function uniqueSlug(title) {
   }
 }
 
+const authorShape = (a) => ({
+  id: a.id,
+  name: a.name,
+  photoUrl: authorPhotoUrl(a),
+  createdAt: a.created_at,
+});
+
 const blogShape = (b) => ({
   id: b.id,
   slug: b.slug,
@@ -170,24 +181,38 @@ const blogShape = (b) => ({
   publishedAt: b.published_at,
   createdAt: b.created_at,
   updatedAt: b.updated_at,
-  author: { id: b.author_id, firstName: b.first_name, lastName: b.last_name, role: b.role },
+  ownerId: b.owner_id,
+  author: b.ba_id ? { id: b.ba_id, name: b.ba_name, photoUrl: b.ba_photo ? `/uploads/author-photos/${b.ba_photo}` : null } : null,
 });
 
 const BLOG_BODY = `
-  SELECT b.*, u.first_name, u.last_name, r.name AS role
+  SELECT b.*, a.id AS ba_id, a.name AS ba_name, a.photo_filename AS ba_photo
   FROM blog_posts b
-  JOIN users u ON u.id = b.author_id
-  JOIN roles r ON r.id = u.role_id`;
+  LEFT JOIN authors a ON a.id = b.author_id`;
+
+const authorIdField = z.preprocess(
+  (v) => (v === '' || v === undefined || v === null ? null : Number(v)),
+  z.number().int().positive().nullable(),
+);
 
 const blogSchema = z.object({
   title: z.string().trim().min(1).max(180),
   excerpt: z.string().trim().max(500).optional().nullable(),
   content_html: z.string().max(500000).optional().default(''),
   status: z.enum(['draft', 'published']).default('draft'),
+  author_id: authorIdField.optional(),
 });
 
+/** Vérifie que l'auteur affiché existe (si fourni). */
+async function resolveAuthorId(authorId) {
+  if (authorId === undefined || authorId === null) return null;
+  const { rows } = await query('SELECT id FROM authors WHERE id = $1', [authorId]);
+  if (!rows[0]) throw new HttpError(400, 'invalid_author', 'Auteur introuvable.');
+  return rows[0].id;
+}
+
 function canWriteBlog(user, post) {
-  return user.role === 'ADMIN' || Number(post.author_id) === Number(user.id);
+  return user.role === 'ADMIN' || Number(post.owner_id) === Number(user.id);
 }
 
 // ---- API publique (référencement : aucune authentification requise)
@@ -201,7 +226,7 @@ router.get('/public', async (req, res, next) => {
       slug: b.slug, title: b.title, excerpt: b.excerpt,
       coverUrl: coverUrl(b),
       publishedAt: b.published_at,
-      author: { firstName: b.first_name, lastName: b.last_name },
+      author: b.ba_id ? { id: b.ba_id, name: b.ba_name, photoUrl: b.ba_photo ? `/uploads/author-photos/${b.ba_photo}` : null } : null,
     })));
   } catch (e) { next(e); }
 });
@@ -215,7 +240,7 @@ router.get('/', requireAuth, requirePermission('posts.create'), async (req, res,
     const conds = [];
     const params = [];
     if (status === 'draft' || status === 'published') { params.push(status); conds.push(`b.status=$${params.length}`); }
-    if (mine === '1' && req.user.role !== 'ADMIN') { params.push(req.user.id); conds.push(`b.author_id=$${params.length}`); }
+    if (mine === '1' && req.user.role !== 'ADMIN') { params.push(req.user.id); conds.push(`b.owner_id=$${params.length}`); }
     const { rows } = await query(`${BLOG_BODY}${conds.length ? ` WHERE ${conds.join(' AND ')}` : ''} ORDER BY b.updated_at DESC LIMIT 200`, params);
     res.json(rows.map(blogShape));
   } catch (e) { next(e); }
@@ -226,10 +251,11 @@ router.post('/', requireAuth, requirePermission('posts.create'), handleUpload(co
     const b = blogSchema.parse(req.body);
     const slug = await uniqueSlug(b.title);
     const publishedAt = b.status === 'published' ? new Date().toISOString() : null;
+    const authorId = await resolveAuthorId(b.author_id);
     const { rows } = await query(
-      `INSERT INTO blog_posts (slug, title, excerpt, content_html, cover_filename, cover_mime, author_id, status, published_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [slug, b.title, b.excerpt?.trim() || null, sanitizeHtml(b.content_html), req.file?.filename ?? null, req.file?.mimetype ?? null, req.user.id, b.status, publishedAt],
+      `INSERT INTO blog_posts (slug, title, excerpt, content_html, cover_filename, cover_mime, owner_id, author_id, status, published_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [slug, b.title, b.excerpt?.trim() || null, sanitizeHtml(b.content_html), req.file?.filename ?? null, req.file?.mimetype ?? null, req.user.id, authorId, b.status, publishedAt],
     );
     await logAudit({ userId: req.user.id, action: 'BLOG_CREATED', resourceType: 'blog_post', resourceId: rows[0].id, ip: req.ip });
     const full = await query(`${BLOG_BODY} WHERE b.id=$1`, [rows[0].id]);
@@ -242,6 +268,67 @@ router.post('/images', requireAuth, requirePermission('posts.create'), handleUpl
   try {
     if (!req.file) throw new HttpError(400, 'missing_file', 'Aucune image reçue.');
     res.status(201).json({ url: `/uploads/blog-images/${req.file.filename}` });
+  } catch (e) { next(e); }
+});
+
+/* ------------------------------------------------------------------ */
+/* Auteurs d'articles (byline avec photo)                               */
+/* ------------------------------------------------------------------ */
+
+function deleteAuthorPhotoFile(filename) {
+  if (!filename) return;
+  const p = join(AUTHOR_PHOTOS_DIR, filename);
+  if (existsSync(p)) unlinkSync(p);
+}
+
+/** Liste des auteurs pour le sélecteur d'auteur de l'éditeur et la gestion. */
+router.get('/authors', requireAuth, requirePermission('posts.create'), async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT * FROM authors ORDER BY name ASC');
+    res.json(rows.map(authorShape));
+  } catch (e) { next(e); }
+});
+
+/** Crée un auteur (nom + photo optionnelle). */
+router.post('/authors', requireAuth, requirePermission('posts.create'), handleUpload(authorPhotoUpload, 'photo'), async (req, res, next) => {
+  try {
+    const b = z.object({ name: z.string().trim().min(1).max(120) }).parse(req.body);
+    const { rows } = await query(
+      'INSERT INTO authors (name, photo_filename) VALUES ($1, $2) RETURNING *',
+      [b.name, req.file?.filename ?? null],
+    );
+    await logAudit({ userId: req.user.id, action: 'BLOG_AUTHOR_CREATED', resourceType: 'blog_author', resourceId: rows[0].id, ip: req.ip });
+    res.status(201).json(authorShape(rows[0]));
+  } catch (e) { next(e instanceof z.ZodError ? new HttpError(400, 'invalid_body', e.issues[0].message) : e); }
+});
+
+/** Modifie un auteur (nom et/ou photo). */
+router.put('/authors/:id', requireAuth, requirePermission('posts.create'), handleUpload(authorPhotoUpload, 'photo'), async (req, res, next) => {
+  try {
+    const b = z.object({ name: z.string().trim().min(1).max(120).optional() }).parse(req.body);
+    const { rows: before } = await query('SELECT * FROM authors WHERE id = $1', [req.params.id]);
+    if (!before[0]) throw new HttpError(404, 'not_found', 'Auteur introuvable.');
+    const removePhoto = req.body.removePhoto === 'true';
+    if ((req.file || removePhoto) && before[0].photo_filename) deleteAuthorPhotoFile(before[0].photo_filename);
+    const newPhoto = req.file ? req.file.filename : (removePhoto ? null : before[0].photo_filename);
+    const { rows } = await query(
+      'UPDATE authors SET name = COALESCE($1, name), photo_filename = $2 WHERE id = $3 RETURNING *',
+      [b.name ?? null, newPhoto, req.params.id],
+    );
+    await logAudit({ userId: req.user.id, action: 'BLOG_AUTHOR_UPDATED', resourceType: 'blog_author', resourceId: rows[0].id, ip: req.ip });
+    res.json(authorShape(rows[0]));
+  } catch (e) { next(e instanceof z.ZodError ? new HttpError(400, 'invalid_body', e.issues[0].message) : e); }
+});
+
+/** Supprime un auteur (sa photo est effacée ; les articles gardent un byline « Admin »). */
+router.delete('/authors/:id', requireAuth, requirePermission('posts.create'), async (req, res, next) => {
+  try {
+    const { rows } = await query('SELECT * FROM authors WHERE id = $1', [req.params.id]);
+    if (!rows[0]) throw new HttpError(404, 'not_found', 'Auteur introuvable.');
+    deleteAuthorPhotoFile(rows[0].photo_filename);
+    await query('DELETE FROM authors WHERE id = $1', [req.params.id]); // FK : blog_posts.author_id → NULL
+    await logAudit({ userId: req.user.id, action: 'BLOG_AUTHOR_DELETED', resourceType: 'blog_author', resourceId: req.params.id, ip: req.ip });
+    res.status(204).end();
   } catch (e) { next(e); }
 });
 
@@ -308,6 +395,7 @@ router.put('/:id', requireAuth, requirePermission('posts.create'), handleUpload(
       excerpt: z.string().trim().max(500).optional().nullable(),
       content_html: z.string().max(500000).optional(),
       status: z.enum(['draft', 'published']).optional(),
+      author_id: authorIdField.optional(),
     }).parse(req.body);
     const { rows: before } = await query('SELECT * FROM blog_posts WHERE id=$1', [req.params.id]);
     if (!before[0]) throw new HttpError(404, 'not_found', 'Article introuvable.');
@@ -321,11 +409,12 @@ router.put('/:id', requireAuth, requirePermission('posts.create'), handleUpload(
     const newCoverMime = req.file ? req.file.mimetype : (removeCover ? null : before[0].cover_mime);
     const newStatus = b.status ?? before[0].status;
     const publishedAt = newStatus === 'published' && !before[0].published_at ? new Date().toISOString() : before[0].published_at;
+    const newAuthorId = b.author_id !== undefined ? await resolveAuthorId(b.author_id) : before[0].author_id;
     const { rows } = await query(
       `UPDATE blog_posts SET title=COALESCE($1,title), excerpt=$2, content_html=COALESCE($3,content_html),
-        cover_filename=$4, cover_mime=$5, status=$6, published_at=$7, updated_at=CURRENT_TIMESTAMP
-       WHERE id=$8 RETURNING *`,
-      [b.title, b.excerpt !== undefined ? (b.excerpt?.trim() || null) : before[0].excerpt, b.content_html !== undefined ? sanitizeHtml(b.content_html) : undefined, newCover, newCoverMime, newStatus, publishedAt, req.params.id],
+        cover_filename=$4, cover_mime=$5, status=$6, published_at=$7, author_id=$8, updated_at=CURRENT_TIMESTAMP
+       WHERE id=$9 RETURNING *`,
+      [b.title, b.excerpt !== undefined ? (b.excerpt?.trim() || null) : before[0].excerpt, b.content_html !== undefined ? sanitizeHtml(b.content_html) : undefined, newCover, newCoverMime, newStatus, publishedAt, newAuthorId, req.params.id],
     );
     await logAudit({ userId: req.user.id, action: 'BLOG_UPDATED', resourceType: 'blog_post', resourceId: rows[0].id, ip: req.ip });
     const full = await query(`${BLOG_BODY} WHERE b.id=$1`, [rows[0].id]);

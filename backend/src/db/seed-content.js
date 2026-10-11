@@ -384,15 +384,23 @@ const ARTICLES = [
   },
 ];
 
-async function seedArticles(authorId) {
+async function ensureBlogAuthor(name) {
+  const { rows } = await query('SELECT id FROM authors WHERE name = $1', [name]);
+  if (rows[0]) return rows[0].id;
+  const { rows: created } = await query('INSERT INTO authors (name) VALUES ($1) RETURNING id', [name]);
+  return created[0].id;
+}
+
+async function seedArticles(ownerId) {
+  const blogAuthorId = await ensureBlogAuthor('Benoni Tshibamba');
   let added = 0;
   for (const a of ARTICLES) {
     const { rows } = await query('SELECT id FROM blog_posts WHERE slug = $1', [a.slug]);
     if (rows[0]) continue;
     await query(
-      `INSERT INTO blog_posts (slug, title, excerpt, content_html, author_id, status, published_at)
-       VALUES ($1, $2, $3, $4, $5, 'published', CURRENT_TIMESTAMP)`,
-      [a.slug, a.title, a.excerpt, a.contentHtml, authorId],
+      `INSERT INTO blog_posts (slug, title, excerpt, content_html, author_id, owner_id, status, published_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'published', CURRENT_TIMESTAMP)`,
+      [a.slug, a.title, a.excerpt, a.contentHtml, blogAuthorId, ownerId],
     );
     added++;
   }

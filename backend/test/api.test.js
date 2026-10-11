@@ -839,6 +839,43 @@ describe('assistant IA (multi-fournisseurs)', () => {
       });
     } finally { restoreEnv(env); }
   });
+
+  test('question sans rapport avec les documents → aucun document pertinent cité (seuil de pertinence)', async () => {
+    const env = snapEnv();
+    process.env.LLM_API_KEY = 'cle-test';
+    try {
+      await withMockFetch((u) => {
+        // Vecteur orthogonal aux extraits indexés ([1,0,0] et [0,1,0]) :
+        // similarité cosinus = 0 < MIN_SCORE → aucun extrait retenu.
+        if (u.includes(':embedContent')) return geminiEmbedOk([0, 0, 1]);
+        return geminiChatOk('Réponse.');
+      }, async () => {
+        const res = await api('/api/ai/ask', { token: clientToken, method: 'POST', body: { question: 'question sans aucun rapport avec les documents' } });
+        assert.equal(res.status, 200);
+        assert.deepEqual(res.body.sources, []);
+        assert.ok(res.body.answer.includes('aucun document pertinent'), `réponse inattendue : ${res.body.answer}`);
+      });
+    } finally { restoreEnv(env); }
+  });
+
+  test('fournisseur surchargé (503) → 503 + message français complet, pas le texte brut anglais', async () => {
+    const env = snapEnv();
+    process.env.LLM_API_KEY = 'cle-test';
+    const overloaded = () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: { code: 503, message: 'The model is overloaded. Please try again later.', status: 'UNAVAILABLE' } }),
+    });
+    try {
+      await withMockFetch((u) => overloaded(u), async () => {
+        const res = await api('/api/ai/ask', { token: adminToken, method: 'POST', body: { question: 'question juridique' } });
+        assert.equal(res.status, 503);
+        assert.equal(res.body.error.code, 'llm_overloaded');
+        assert.ok(res.body.error.message.includes('momentanément surchargé'), `message inattendu : ${res.body.error.message}`);
+        assert.ok(!res.body.error.message.includes('overloaded'), 'le texte anglais du fournisseur a fuité');
+      });
+    } finally { restoreEnv(env); }
+  });
 });
 
 describe('messagerie v2 (groupes, reçus, recherche)', () => {
@@ -1187,13 +1224,18 @@ describe('blog SEO (API + SSR)', () => {
     assert.ok(!html.includes('<script>alert'));
   });
 
-  test("menu complet sur la page article (FR par défaut, EN via Accept-Language), sans bouton retour", async () => {
+  test("menu complet sur la page article (FR par défaut, EN via ?lang=en), sans bouton retour", async () => {
     const fr = await (await fetch(`${base}/blog/${slug}`)).text();
     assert.ok(fr.includes('class="public-header"'));
     assert.ok(fr.includes('>Accueil<'));
     assert.ok(!fr.includes('← Retour au blog'));
     assert.ok(!fr.includes('blog-back'));
-    const en = await (await fetch(`${base}/blog/${slug}`, { headers: { 'Accept-Language': 'en-US,en;q=0.9' } })).text();
+    // Un téléphone en anglais (Accept-Language: en) affiche quand même le
+    // français par défaut : le menu suit la langue choisie, pas le navigateur.
+    const frEnHeader = await (await fetch(`${base}/blog/${slug}`, { headers: { 'Accept-Language': 'en-US,en;q=0.9' } })).text();
+    assert.ok(frEnHeader.includes('>Accueil<'));
+    assert.ok(!frEnHeader.includes('>Home<'));
+    const en = await (await fetch(`${base}/blog/${slug}?lang=en`)).text();
     assert.ok(en.includes('>Home<'));
     assert.ok(en.includes('>My Space<'));
     assert.ok(!en.includes('← Back to blog'));
@@ -1239,6 +1281,68 @@ describe('blog SEO (API + SSR)', () => {
     assert.equal(denied.status, 403);
     const ok = await api(`/api/blog/${draftId}`, { token: lawyerToken, method: 'DELETE' });
     assert.equal(ok.status, 204);
+  });
+});
+
+describe('auteurs du blog (byline avec photo)', () => {
+  const uniq = Date.now().toString(36);
+  let authorId;
+
+  test('liste initiale contient Benoni Tshibamba (migration)', async () => {
+    const res = await api('/api/blog/authors', { token: adminToken });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.some((a) => a.name === 'Benoni Tshibamba'));
+  });
+
+  test('accès sans token → 401 ; client → 403', async () => {
+    const anon = await api('/api/blog/authors');
+    assert.equal(anon.status, 401);
+    const denied = await api('/api/blog/authors', { token: clientToken });
+    assert.equal(denied.status, 403);
+  });
+
+  test('création avec photo → 201, photo servie', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+    const form = new FormData();
+    form.append('name', `Auteur Test ${uniq}`);
+    form.append('photo', new Blob([png], { type: 'image/png' }), 'photo.png');
+    const res = await postMultipart('/api/blog/authors', adminToken, form);
+    assert.equal(res.status, 201);
+    const body = await res.json();
+    authorId = body.id;
+    assert.ok(body.photoUrl.startsWith('/uploads/author-photos/'));
+    const img = await fetch(`${base}${body.photoUrl}`);
+    assert.equal(img.status, 200);
+  });
+
+  test('article avec author_id → byline nom + photo dans /public', async () => {
+    const res = await api('/api/blog', {
+token: lawyerToken, method: 'POST',
+      body: { title: `Article auteur ${uniq}`, content_html: '<p>X</p>', status: 'published', author_id: authorId },
+    });
+    assert.equal(res.status, 201);
+    const pub = await api('/api/blog/public?limit=50');
+    const found = pub.body.find((p) => p.slug === res.body.slug);
+    assert.ok(found);
+    assert.equal(found.author.name, `Auteur Test ${uniq}`);
+    assert.ok(found.author.photoUrl);
+  });
+
+  test('author_id inexistant → 400', async () => {
+    const res = await api('/api/blog', {
+token: lawyerToken, method: 'POST',
+      body: { title: `Mauvais auteur ${uniq}`, content_html: '<p>X</p>', author_id: 999999 },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test('suppression auteur → articles en SET NULL (byline « Admin »)', async () => {
+    const del = await api(`/api/blog/authors/${authorId}`, { token: adminToken, method: 'DELETE' });
+    assert.equal(del.status, 204);
+    const list = await api('/api/blog/public?limit=50');
+    const found = list.body.find((p) => p.title === `Article auteur ${uniq}`);
+    assert.ok(found);
+    assert.equal(found.author, null);
   });
 });
 
@@ -2450,5 +2554,29 @@ describe('v5 — génération d’article IA (POST /api/blog/ai-generate)', () =
     } finally {
       if (prevKey === undefined) delete process.env.LLM_API_KEY; else process.env.LLM_API_KEY = prevKey;
     }
+  });
+});
+
+describe('v6 — correctifs', () => {
+  test('/uploads/blog-images/* servi en statique (régression 404 post-déploiement)', async () => {
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    const form = new FormData();
+    form.append('image', new Blob([png], { type: 'image/png' }), 'v6.png');
+    const up = await fetch(`${base}/api/blog/images`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${lawyerToken}` },
+      body: form,
+    });
+    assert.equal(up.status, 201);
+    const { url } = await up.json();
+    assert.ok(url.startsWith('/uploads/blog-images/'));
+    const get = await fetch(`${base}${url}`);
+    assert.equal(get.status, 200);
+    assert.ok((get.headers.get('content-type') || '').startsWith('image/'));
+    const missing = await fetch(`${base}/uploads/blog-images/inexistant-xyz.png`);
+    assert.equal(missing.status, 404);
   });
 });
