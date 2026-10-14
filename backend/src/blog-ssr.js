@@ -193,6 +193,7 @@ function pageShell({ title, description, canonical, og = {}, body, firm, lang = 
 ${description ? `<meta name="description" content="${esc(description)}">` : ''}
 ${canonical ? `<link rel="canonical" href="${esc(canonical)}">` : ''}
 <meta property="og:type" content="${og.type || 'website'}">
+<meta property="og:site_name" content="${esc(firm.name)}">
 <meta property="og:title" content="${esc(og.title || title)}">
 ${og.description || description ? `<meta property="og:description" content="${esc(og.description || description)}">` : ''}
 ${canonical ? `<meta property="og:url" content="${esc(canonical)}">` : ''}

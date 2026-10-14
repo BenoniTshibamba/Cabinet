@@ -114,6 +114,97 @@ function updateTokens(accessToken, refreshToken) {
   setSession({ ...session, accessToken, refreshToken });
 }
 
+/* --- Déconnexion automatique après 2 h d'inactivité ---
+   Seuls les gestes réels comptent comme activité (souris, clavier, tactile) :
+   les appels d'arrière-plan — messagerie (poll 5 s), minuteurs de facturation,
+   diaporama — ne prolongent pas la session. L'horodatage vit en localStorage :
+   partagé entre les onglets et conservé après rechargement. Un minuteur en
+   cours n'est pas perdu : il est sauvegardé localement et restauré à la
+   reconnexion. */
+const IDLE_LIMIT_MS = 2 * 60 * 60 * 1000; // 2 h
+const IDLE_WARN_MS = 60 * 1000; // avertissement 1 min avant
+const IDLE_ACTIVITY_KEY = 'cej:lastActivity';
+let idleWarnCloseFn = null;
+let idleWarnTickId = null;
+
+const idleNow = () => Date.now();
+
+function idleLastActivity() {
+  const v = Number(localStorage.getItem(IDLE_ACTIVITY_KEY) || 0);
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
+function idleRemainingMs() {
+  const last = idleLastActivity();
+  return last === null ? IDLE_LIMIT_MS : IDLE_LIMIT_MS - (idleNow() - last);
+}
+
+function closeIdleWarn() {
+  if (idleWarnTickId) { clearInterval(idleWarnTickId); idleWarnTickId = null; }
+  if (idleWarnCloseFn) { const close = idleWarnCloseFn; idleWarnCloseFn = null; close(); }
+}
+
+function idleMarkActivity() {
+  try { localStorage.setItem(IDLE_ACTIVITY_KEY, String(idleNow())); } catch { /* stockage indisponible */ }
+  closeIdleWarn();
+}
+
+function showIdleWarn() {
+  const text = h('p', null, '');
+  const paint = () => {
+    const s = Math.max(0, Math.ceil(idleRemainingMs() / 1000));
+    text.textContent = t('idleWarnBody').replace('{s}', String(s));
+  };
+  paint();
+  const content = h('div', { class: 'stacked-form' },
+    text,
+    h('button', { class: 'btn btn-primary', type: 'button', onclick: () => idleMarkActivity() }, t('idleStay')));
+  idleWarnCloseFn = openModal(t('idleWarnTitle'), content);
+  idleWarnTickId = setInterval(() => {
+    if (!getSession()) { closeIdleWarn(); return; }
+    const remaining = idleRemainingMs();
+    if (remaining > IDLE_WARN_MS) { closeIdleWarn(); return; } // activité reprise (cet onglet ou un autre)
+    if (remaining <= 0) { closeIdleWarn(); idleLogout(); return; }
+    paint();
+  }, 500);
+}
+
+async function idleLogout() {
+  closeIdleWarn();
+  const rt = getSession()?.refreshToken;
+  if (rt) {
+    try {
+      await fetch(apiUrl('/auth/logout'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: rt }),
+      });
+    } catch { /* best effort : la session locale est fermée de toute façon */ }
+  }
+  try { localStorage.removeItem(IDLE_ACTIVITY_KEY); } catch { /* stockage indisponible */ }
+  logout();
+  toast(t('idleLoggedOut'), 'error');
+}
+
+// Gestes réels uniquement (capture : avant tout autre handler).
+for (const evt of ['pointerdown', 'keydown', 'touchstart']) {
+  window.addEventListener(evt, idleMarkActivity, { passive: true, capture: true });
+}
+let idleLastMouseMove = 0;
+window.addEventListener('mousemove', () => {
+  const n = idleNow();
+  if (n - idleLastMouseMove >= 5000) { idleLastMouseMove = n; idleMarkActivity(); }
+}, { passive: true });
+
+// Contrôle périodique de l'inactivité.
+setInterval(() => {
+  if (!getSession()) { closeIdleWarn(); return; }
+  if (idleLastActivity() === null) { idleMarkActivity(); return; } // session fraîche : on part de maintenant
+  const remaining = idleRemainingMs();
+  if (remaining <= 0) idleLogout();
+  else if (remaining <= IDLE_WARN_MS && !idleWarnCloseFn) showIdleWarn();
+}, 10000);
+
 
 /* --- api.js --- */
 
@@ -1312,6 +1403,7 @@ function renderLogin() {
 
   function completeLogin(body) {
     setSession({ accessToken: body.accessToken, refreshToken: body.refreshToken, user: body.user });
+    idleMarkActivity();
     // Direction explicite vers le tableau de bord : rester sur #/home donnait
     // l'impression que la connexion n'avait rien fait, car c'est la même page
     // publique (juste avec un bouton « Mon espace » en plus, facile à manquer).
@@ -1513,6 +1605,7 @@ async function handleOauthCallback(code) {
   try {
     const body = await api.oauthGoogleComplete(code);
     setSession({ accessToken: body.accessToken, refreshToken: body.refreshToken, user: body.user });
+    idleMarkActivity();
     location.hash = '#/dashboard';
     if (location.hash === '#/dashboard') await route();
   } catch {
