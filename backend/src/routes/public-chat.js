@@ -2,6 +2,10 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { HttpError } from '../middleware/auth.js';
 import { chat, llmStatus } from '../services/llm.js';
+import {
+  createConversation, getOwnedConversation, getMessages,
+  getContextMessages, addMessage, titleFromQuestion,
+} from '../services/ai-conversations.js';
 
 const router = Router();
 
@@ -19,9 +23,25 @@ function rateLimited(ip) {
   return false;
 }
 
+/* La relecture de l'historique a son propre compteur (plus généreux) : elle
+ * ne doit pas manger le budget de questions du visiteur. */
+const historyHits = new Map();
+function rateLimitedHistory(ip) {
+  const now = Date.now();
+  const list = (historyHits.get(ip) ?? []).filter((t) => now - t < WINDOW_MS);
+  if (list.length >= 30) return true;
+  list.push(now);
+  historyHits.set(ip, list);
+  return false;
+}
+
 const chatSchema = z.object({
   question: z.string().trim().min(2).max(1000),
   lang: z.enum(['fr', 'en']).optional().default('fr'),
+  // Fil persistant du visiteur (v6.5) : jeton anonyme généré par son navigateur
+  // + identifiant de SA conversation. Sans visitorId, le chat reste sans état.
+  visitorId: z.string().trim().min(8).max(80).optional(),
+  conversationId: z.coerce.number().int().positive().optional(),
 });
 
 /* Cache questions/réponses : les questions identiques (ex. visiteurs qui posent
@@ -93,7 +113,9 @@ Règles strictes :
 
 /**
  * POST /api/public/chat — assistant public, sans authentification.
- * Ne touche JAMAIS aux données internes : aucune requête base de données ici.
+ * Ne lit JAMAIS les données internes du cabinet (dossiers, clients, documents).
+ * Seule écriture : le fil de conversation du visiteur lui-même (ai_conversations
+ * / ai_messages, kind 'public'), pour que SON historique survive aux visites.
  */
 router.post('/', async (req, res, next) => {
   try {
@@ -104,22 +126,67 @@ router.post('/', async (req, res, next) => {
     if (!llmStatus().available) {
       return res.json({ answer: UNAVAILABLE[b.lang] });
     }
+
+    // Fil du visiteur : reprise (propriété vérifiée par visitorId) ou création.
+    let conv = null;
+    if (b.visitorId) {
+      if (b.conversationId) {
+        conv = await getOwnedConversation(b.conversationId, { visitorId: b.visitorId });
+      }
+      if (!conv) conv = await createConversation({ visitorId: b.visitorId, kind: 'public' });
+    }
+    const history = conv ? await getContextMessages(conv.id) : [];
+
+    const savePair = async (answer) => {
+      if (!conv) return;
+      await addMessage(conv.id, 'user', b.question);
+      await titleFromQuestion(conv.id, b.question);
+      await addMessage(conv.id, 'assistant', answer);
+    };
+    const withConv = (payload) => (conv ? { ...payload, conversationId: conv.id } : payload);
+
     const cached = cacheGet(b.lang, b.question);
-    if (cached) return res.json({ answer: cached });
+    if (cached) {
+      await savePair(cached);
+      return res.json(withConv({ answer: cached }));
+    }
     let answer;
     try {
       answer = await chat(
         [
           { role: 'system', content: systemPrompt(b.lang) },
+          ...history,
           { role: 'user', content: b.question },
         ],
         { maxTokens: 400, temperature: 0.7 },
       );
       cacheSet(b.lang, b.question, answer);
     } catch {
-      return res.json({ answer: ERROR_MSG[b.lang] });
+      return res.json(withConv({ answer: ERROR_MSG[b.lang] }));
     }
-    res.json({ answer });
+    await savePair(answer);
+    res.json(withConv({ answer }));
+  } catch (err) {
+    next(err instanceof z.ZodError ? new HttpError(400, 'invalid_body', err.issues[0].message) : err);
+  }
+});
+
+/**
+ * GET /api/public/chat/history?visitorId=…&conversationId=…
+ * Le visiteur relit SON fil (vérifié par visitorId) — jamais celui d'un autre.
+ */
+router.get('/history', async (req, res, next) => {
+  try {
+    if (rateLimitedHistory(req.ip)) {
+      throw new HttpError(429, 'too_many_requests', 'Trop de demandes. Veuillez réessayer dans une minute.');
+    }
+    const q = z.object({
+      visitorId: z.string().trim().min(8).max(80),
+      conversationId: z.coerce.number().int().positive(),
+    }).parse(req.query);
+    const conv = await getOwnedConversation(q.conversationId, { visitorId: q.visitorId });
+    if (!conv) throw new HttpError(404, 'not_found', 'Conversation introuvable.');
+    res.json({ conversationId: conv.id, messages: await getMessages(conv.id) });
   } catch (err) {
     next(err instanceof z.ZodError ? new HttpError(400, 'invalid_body', err.issues[0].message) : err);
   }

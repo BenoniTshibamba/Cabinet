@@ -474,8 +474,13 @@ const api = {
   convSendTyping: (id) => request(`/social/conversations/${id}/typing`, { method: 'POST' }).catch(() => null),
   convGetTyping: (id) => request(`/social/conversations/${id}/typing`).catch(() => ({ typing: [] })),
   aiStatus: () => request('/ai/status'),
-  askAI: (question, caseId, lang) => request('/ai/ask', { method: 'POST', body: { question, ...(caseId ? { caseId } : {}), ...(lang ? { lang } : {}) } }),
-  publicChat: (question, lang) => request('/public/chat', { method: 'POST', body: { question, lang } }),
+  askAI: (question, caseId, lang, conversationId) => request('/ai/ask', { method: 'POST', body: { question, ...(caseId ? { caseId } : {}), ...(lang ? { lang } : {}), ...(conversationId ? { conversationId } : {}) } }),
+  aiConversations: () => request('/ai/conversations'),
+  aiConversation: (id) => request(`/ai/conversations/${id}`),
+  aiNewConversation: () => request('/ai/conversations', { method: 'POST', body: {} }),
+  aiDeleteConversation: (id) => request(`/ai/conversations/${id}`, { method: 'DELETE' }),
+  publicChat: (question, lang, visitorId, conversationId) => request('/public/chat', { method: 'POST', body: { question, lang, ...(visitorId ? { visitorId } : {}), ...(conversationId ? { conversationId } : {}) } }),
+  publicChatHistory: (visitorId, conversationId) => request(`/public/chat/history?visitorId=${encodeURIComponent(visitorId)}&conversationId=${encodeURIComponent(conversationId)}`),
   indexDocument: (id) => request(`/ai/index-document/${id}`, { method: 'POST' }),
   registerRequest: (body) => request('/registration-requests', { method: 'POST', body }),
   registrationRequests: () => request('/registration-requests'),
@@ -2844,9 +2849,10 @@ async function viewMessages(main) {
 
 async function viewAI(main){
   const caseSelect=h('select',null,h('option',{value:''},t('aiAllDocs')));
-  const question=h('textarea',{rows:5,placeholder:t('aiQuestionPh')});
-  const answer=h('div',{class:'ai-answer'});
+  const question=h('textarea',{rows:4,placeholder:t('aiQuestionPh')});
   const statusBox=h('div',{class:'panel ai-status'},h('p',{class:'loading'},t('aiChecking')));
+  const thread=h('div',{class:'cej-chat-msgs ai-thread',role:'log','aria-live':'polite'});
+  const convSelect=h('select',{class:'ai-conv-select','aria-label':t('aiConversations')});
   const cases=await guarded(()=>api.cases({}));
   for(const c of cases||[])caseSelect.append(h('option',{value:c.id},`${c.caseNumber} — ${c.title}`));
 
@@ -2862,19 +2868,75 @@ async function viewAI(main){
     clear(statusBox).append(h('h3',null,t('aiTitle')),h('p',{class:'form-error'},errorMessage(err)));
   }
 
+  // Fil continu (v6.5) : les échanges s'ajoutent les uns après les autres et
+  // sont sauvegardés côté serveur — la conversation survit à la déconnexion.
+  let convId=null;
+  const renderBubble=(role,text,cls='')=>{
+    const d=h('div',{class:`cej-chat-msg ${role}${cls?` ${cls}`:''}`},h('p',null,text));
+    thread.append(d); thread.scrollTop=thread.scrollHeight; return d;
+  };
+  const renderThread=(messages)=>{
+    clear(thread);
+    if(!messages.length){ thread.append(h('p',{class:'muted'},t('aiThreadEmpty'))); return; }
+    for(const m of messages) renderBubble(m.role,m.text);
+  };
+  const convLabel=(c)=>`${c.title||t('aiConversationDefault')} · ${(c.updated_at||'').slice(0,10)}`;
+  const loadList=async(selectId)=>{
+    let list=[];
+    try{ list=await api.aiConversations(); }catch{ list=[]; }
+    clear(convSelect);
+    for(const c of list) convSelect.append(h('option',{value:c.id},convLabel(c)));
+    if(!list.length){ convId=null; renderThread([]); return; }
+    const target=list.some((c)=>c.id===selectId)?selectId:list[0].id;
+    convSelect.value=String(target);
+    await openConv(target);
+  };
+  const openConv=async(id)=>{
+    convId=id;
+    try{
+      const r=await api.aiConversation(id);
+      renderThread(r.messages||[]);
+    }catch(err){ clear(thread).append(h('p',{class:'form-error'},errorMessage(err))); }
+  };
+  convSelect.addEventListener('change',()=>{ if(convSelect.value) openConv(Number(convSelect.value)); });
+  const newBtn=h('button',{class:'btn btn-secondary',type:'button',onclick:async()=>{
+    try{ const c=await api.aiNewConversation(); await loadList(c.id); question.focus(); }
+    catch(err){ toast(errorMessage(err),'error'); }
+  }},t('aiNewConversation'));
+  const delBtn=h('button',{class:'btn btn-secondary',type:'button',onclick:async()=>{
+    if(!convId) return;
+    try{ await api.aiDeleteConversation(convId); convId=null; await loadList(null); }
+    catch(err){ toast(errorMessage(err),'error'); }
+  }},t('aiDeleteConversation'));
+
   const form=h('form',{class:'stacked-form',onsubmit:async e=>{
     e.preventDefault();
-    if(!question.value.trim()) return;
-    clear(answer).append(h('p',{class:'loading'},t('aiSearching')));
+    const q=question.value.trim();
+    if(!q) return;
+    question.value='';
+    if(convId===null && thread.querySelector('.muted')) clear(thread);
+    renderBubble('user',q);
+    const typing=renderBubble('assistant',t('chatTyping'),'typing');
     try{
-      const r=await api.askAI(question.value,caseSelect.value?Number(caseSelect.value):undefined);
-      clear(answer).append(h('p',null,r.answer));
+      const r=await api.askAI(q,caseSelect.value?Number(caseSelect.value):undefined,undefined,convId??undefined);
+      typing.remove();
+      renderBubble('assistant',r.answer);
       if((r.sources||[]).length){
-        answer.append(h('h3',null,t('aiSources')),...(r.sources||[]).map(s=>h('div',{class:'source-item'},`[Source ${s.number}] ${s.name} — ${s.caseNumber}`)));
+        thread.append(h('div',{class:'cej-chat-sources'},
+          h('span',{class:'cej-chat-sources-label'},`${t('aiSources')} :`),
+          ...r.sources.map(s=>h('span',{class:'cej-chat-chip'},`[${s.number}] ${s.name} — ${s.caseNumber}`))));
+        thread.scrollTop=thread.scrollHeight;
       }
-    }catch(err){clear(answer).append(h('p',{class:'form-error'},errorMessage(err)));}
+      if(r.conversationId && r.conversationId!==convId){ await loadList(r.conversationId); }
+      else if(r.conversationId){ convSelect.value=String(r.conversationId); }
+    }catch(err){ typing.remove(); renderBubble('assistant',errorMessage(err),'error'); }
   }},field(t('aiCase'),caseSelect),field(t('aiQuestion'),question),h('button',{class:'btn btn-primary',type:'submit'},t('aiAsk')));
-  clear(main).append(h('div',{class:'page'},h('div',{class:'page-head'},h('h1',null,t('navAI')),h('p',{class:'muted'},t('aiSubtitle'))),statusBox,h('section',{class:'panel'},form),h('section',{class:'panel'},h('h2',null,t('aiAnswer')),answer)));
+
+  const convBar=h('div',{class:'ai-conv-bar'},
+    h('label',{class:'ai-conv-label'},t('aiConversations')),
+    convSelect,newBtn,delBtn);
+  clear(main).append(h('div',{class:'page'},h('div',{class:'page-head'},h('h1',null,t('navAI')),h('p',{class:'muted'},t('aiSubtitle'))),statusBox,h('section',{class:'panel'},convBar,thread),h('section',{class:'panel'},form)));
+  await loadList(null);
 }
 
 
@@ -2940,6 +3002,37 @@ function mountChatWidget(mode = 'staff') {
   const saveHist = () => { try { localStorage.setItem(storeKey(), JSON.stringify(hist.slice(-HIST_MAX))); } catch { /* quota : on ignore */ } };
   const pushHist = (role, text) => { hist.push({ role, text }); saveHist(); };
 
+  /* --- Fil serveur (v6.5) : la conversation vit côté serveur. Le stockage
+     local ne sert plus que de cache d'affichage et de détenteur des jetons
+     (conversationId, visitorId) qui permettent de retrouver le fil. --- */
+  const convKey = () => `cej:chat:conv:${mode}`;
+  let convId = null;
+  try { convId = Number(localStorage.getItem(convKey())) || null; } catch { convId = null; }
+  const saveConvId = () => {
+    try {
+      if (convId) localStorage.setItem(convKey(), String(convId));
+      else localStorage.removeItem(convKey());
+    } catch { /* stockage indisponible */ }
+  };
+  const visitorId = (() => {
+    if (!isPublic) return null;
+    try {
+      let v = localStorage.getItem('cej:visitorId');
+      if (!v) {
+        v = (globalThis.crypto?.randomUUID ? crypto.randomUUID() : `v${Date.now()}${Math.random().toString(36).slice(2, 12)}`);
+        localStorage.setItem('cej:visitorId', v);
+      }
+      return v;
+    } catch { return null; }
+  })();
+  const renderAll = (messages) => {
+    hist = messages.map((m) => ({ role: m.role, text: m.text }));
+    saveHist();
+    clear(msgs);
+    for (const m of hist) renderMsg(m.role, m.text);
+    msgs.scrollTop = msgs.scrollHeight;
+  };
+
   const renderMsg = (role, text, cls = '') => {
     const d = h('div', { class: `cej-chat-msg ${role}${cls ? ` ${cls}` : ''}` }, h('p', null, text));
     msgs.append(d);
@@ -2953,19 +3046,69 @@ function mountChatWidget(mode = 'staff') {
     msgs.scrollTop = 0;
   };
 
+  const startNewConversation = () => {
+    convId = null;
+    saveConvId();
+    clearHist();
+    const welcome = t(isPublic ? 'chatPublicWelcome' : 'chatWelcome');
+    renderMsg('assistant', welcome);
+    pushHist('assistant', welcome);
+  };
   const clearBtn = h('button', {
-    class: 'cej-chat-clear', type: 'button', title: t('chatClear'), 'aria-label': t('chatClear'),
-    onclick: () => {
-      clearHist();
-      renderMsg('assistant', t(isPublic ? 'chatPublicWelcome' : 'chatWelcome'));
-      pushHist('assistant', t(isPublic ? 'chatPublicWelcome' : 'chatWelcome'));
-    },
-  }, '↺');
+    class: 'cej-chat-clear', type: 'button', title: t('chatNewConversation'), 'aria-label': t('chatNewConversation'),
+    onclick: () => { convList.hidden = true; startNewConversation(); },
+  }, isPublic ? '↺' : '＋');
+
+  /* Liste des conversations passées (personnel uniquement) : le fil choisi
+     est rechargé depuis le serveur — il survit à la déconnexion. */
+  const convList = h('div', { class: 'cej-chat-convs', hidden: true });
+  const renderConvList = async () => {
+    clear(convList).append(h('p', { class: 'cej-chat-convs-loading' }, t('chatTyping')));
+    let list = [];
+    try { list = await api.aiConversations(); } catch { list = []; }
+    clear(convList);
+    if (!list.length) {
+      convList.append(h('p', { class: 'cej-chat-convs-empty' }, t('aiThreadEmpty')));
+      return;
+    }
+    for (const c of list) {
+      const item = h('div', { class: `cej-chat-conv-item${c.id === convId ? ' active' : ''}` },
+        h('button', {
+          class: 'cej-chat-conv-open', type: 'button',
+          onclick: async () => {
+            convList.hidden = true;
+            try {
+              const r = await api.aiConversation(c.id);
+              convId = c.id; saveConvId();
+              renderAll(r.messages || []);
+            } catch (err) { renderMsg('assistant', errorMessage(err), 'error'); }
+          },
+        }, `${c.title || t('aiConversationDefault')} · ${(c.updated_at || '').slice(0, 10)}`),
+        h('button', {
+          class: 'cej-chat-conv-del', type: 'button', title: t('aiDeleteConversation'), 'aria-label': t('aiDeleteConversation'),
+          onclick: async () => {
+            try {
+              await api.aiDeleteConversation(c.id);
+              if (convId === c.id) startNewConversation();
+              renderConvList();
+            } catch (err) { toast(errorMessage(err), 'error'); }
+          },
+        }, '×'));
+      convList.append(item);
+    }
+  };
+  const histBtn = isPublic ? null : h('button', {
+    class: 'cej-chat-clear', type: 'button', title: t('aiConversations'), 'aria-label': t('aiConversations'),
+    onclick: () => { convList.hidden = !convList.hidden; if (!convList.hidden) renderConvList(); },
+  }, '🕘');
+  const headActions = h('span', { class: 'cej-chat-head-actions' },
+    ...(histBtn ? [histBtn] : []), clearBtn,
+    h('button', { class: 'cej-chat-close', type: 'button', 'aria-label': '×', onclick: () => toggleChat(false) }, '×'));
   const panel = h('div', { class: 'cej-chat-panel', hidden: true },
     h('div', { class: 'cej-chat-head' },
       h('span', { class: 'cej-chat-title' }, t('chatTitle')),
-      h('span', { class: 'cej-chat-head-actions' }, clearBtn,
-        h('button', { class: 'cej-chat-close', type: 'button', 'aria-label': '×', onclick: () => toggleChat(false) }, '×'))),
+      headActions),
+    convList,
     msgs,
     h('div', { class: 'cej-chat-form' }, input, sendBtn));
   const bubble = h('button', { class: 'cej-chat-bubble', type: 'button', 'aria-label': t('chatTitle'), 'aria-expanded': 'false', onclick: () => toggleChat() });
@@ -2984,8 +3127,12 @@ function mountChatWidget(mode = 'staff') {
     const typing = renderMsg('assistant', t('chatTyping'), 'typing');
     try {
       const r = isPublic
-        ? await api.publicChat(q, getLang())
-        : await api.askAI(q, undefined, getLang());
+        ? await api.publicChat(q, getLang(), visitorId, convId ?? undefined)
+        : await api.askAI(q, undefined, getLang(), convId ?? undefined);
+      if (r && r.conversationId && r.conversationId !== convId) {
+        convId = r.conversationId;
+        saveConvId();
+      }
       typing.remove();
       renderMsg('assistant', r.answer);
       pushHist('assistant', r.answer);
@@ -3006,6 +3153,44 @@ function mountChatWidget(mode = 'staff') {
   sendBtn.addEventListener('click', doSend);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSend(); });
 
+  // Recharge le fil depuis le serveur (source de vérité) : la conversation
+  // retrouvée est celle du compte (personnel) ou du visiteur (public) — elle
+  // survit à la déconnexion et au changement d'appareil (personnel).
+  const refreshFromServer = async () => {
+    if (isPublic) {
+      if (!visitorId || !convId) return;
+      try {
+        const r = await api.publicChatHistory(visitorId, convId);
+        if ((r.messages || []).length) renderAll(r.messages);
+      } catch {
+        convId = null; saveConvId(); // fil introuvable côté serveur : repartir proprement
+      }
+      return;
+    }
+    try {
+      const status = await api.aiStatus();
+      if (!status.configured) {
+        renderMsg('assistant', t('aiNotReady'), 'error');
+        input.disabled = true;
+        sendBtn.disabled = true;
+        return;
+      }
+      input.disabled = false;
+      sendBtn.disabled = false;
+    } catch (err) {
+      renderMsg('assistant', errorMessage(err), 'error');
+      return;
+    }
+    try {
+      const list = await api.aiConversations();
+      if (!list.length) return;
+      const target = list.some((c) => c.id === convId) ? convId : list[0].id;
+      const r = await api.aiConversation(target);
+      convId = target; saveConvId();
+      if ((r.messages || []).length) renderAll(r.messages);
+    } catch { /* cache local conservé */ }
+  };
+
   async function toggleChat(force) {
     const open = force ?? panel.hidden;
     panel.hidden = !open;
@@ -3022,18 +3207,8 @@ function mountChatWidget(mode = 'staff') {
         const welcome = t(isPublic ? 'chatPublicWelcome' : 'chatWelcome');
         renderMsg('assistant', welcome);
         pushHist('assistant', welcome);
-      } else if (!isPublic) {
-        try {
-          const status = await api.aiStatus();
-          if (!status.configured) {
-            renderMsg('assistant', t('aiNotReady'), 'error');
-            input.disabled = true;
-            sendBtn.disabled = true;
-          } else { input.disabled = false; sendBtn.disabled = false; }
-        } catch (err) {
-          renderMsg('assistant', errorMessage(err), 'error');
-        }
       }
+      refreshFromServer();
     }
     if (open) setTimeout(() => input.focus(), 60);
   }

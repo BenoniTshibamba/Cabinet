@@ -407,3 +407,29 @@ CREATE TABLE IF NOT EXISTS contact_messages (
   is_read INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Conversations de l'assistant IA (v6.5) : fils persistants côté serveur.
+-- kind 'staff' : propriétaire = user_id (personnel et clients connectés).
+-- kind 'public' : propriétaire = visitor_id (jeton anonyme du navigateur du visiteur).
+-- Les conversations survivent à la déconnexion et au changement d'appareil
+-- (staff) ; le contexte des derniers échanges est repassé au modèle à chaque
+-- nouvelle question pour que le fil reste fluide.
+CREATE TABLE IF NOT EXISTS ai_conversations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  visitor_id TEXT,
+  kind TEXT NOT NULL DEFAULT 'staff',
+  title TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS ai_messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  conversation_id INTEGER NOT NULL REFERENCES ai_conversations(id) ON DELETE CASCADE,
+  role TEXT NOT NULL,
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ai_messages_conv ON ai_messages(conversation_id, id);
+CREATE INDEX IF NOT EXISTS idx_ai_conv_user ON ai_conversations(user_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_ai_conv_visitor ON ai_conversations(visitor_id, updated_at);

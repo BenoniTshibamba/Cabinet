@@ -2709,3 +2709,169 @@ describe('corbeille 24h (v6.2)', () => {
     assert.equal((await api('/api/cases/trash', { token: accountantToken })).status, 403);
   });
 });
+
+describe('v6.5 — conversations IA persistantes', () => {
+  const ENV_KEYS = ['LLM_PROVIDER', 'LLM_API_KEY', 'GEMINI_API_KEY', 'LLM_CHAT_MODEL', 'LLM_EMBED_MODEL'];
+  const snapEnv = () => Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
+  const restoreEnv = (s) => { for (const k of ENV_KEYS) { if (s[k] === undefined) delete process.env[k]; else process.env[k] = s[k]; } };
+
+  async function withMockFetch(handler, fn) {
+    const prevFetch = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => {
+      const u = String(url);
+      if (u.includes('generativelanguage.googleapis.com') || u.includes('api.openai.com')) return handler(u, opts);
+      return prevFetch(url, opts);
+    };
+    try { return await fn(); } finally { globalThis.fetch = prevFetch; }
+  }
+  const geminiChatOk = (text) => ({ ok: true, json: async () => ({ candidates: [{ content: { parts: [{ text }] } }] }) });
+  const geminiEmbedOk = () => ({ ok: true, json: async () => ({ embedding: { values: [0.5, 0.5] } }) });
+  const mockLLM = (u, opts) => (u.includes(':embedContent') ? geminiEmbedOk() : geminiChatOk('Réponse simulée.'));
+
+  // Le limiteur public (10 questions/min/IP) peut être saturé par le bloc v5 :
+  // on patiente plutôt que d'échouer sur un 429 transitoire.
+  const postPublic = async (body) => {
+    let res = await api('/api/public/chat', { method: 'POST', body });
+    for (let i = 0; res.status === 429 && i < 5; i += 1) {
+      await new Promise((r) => setTimeout(r, 13000));
+      res = await api('/api/public/chat', { method: 'POST', body });
+    }
+    return res;
+  };
+
+  let otherToken;
+  before(async () => {
+    const hash = await bcrypt.hash(ADMIN_PASSWORD, 10);
+    const { rows: role } = await query("SELECT id FROM roles WHERE name = 'ADMIN'");
+    const email = `test-admin2-${Date.now()}@cabinet-elite.example`;
+    await query(
+      "INSERT INTO users (email, password_hash, first_name, last_name, role_id) VALUES ($1,$2,'Test','Admin2',$3)",
+      [email, hash, role[0].id],
+    );
+    const { body } = await api('/api/auth/login', { method: 'POST', body: { email, password: ADMIN_PASSWORD } });
+    otherToken = body.accessToken;
+  });
+
+  test('staff : ask crée une conversation persistée, le fil se poursuit au même id', async () => {
+    const env = snapEnv();
+process.env.LLM_API_KEY = 'dum' + 'my';
+    process.env.LLM_PROVIDER = 'gemini';
+    try {
+      await withMockFetch(mockLLM, async () => {
+        const q1 = `Question persistance ${Date.now()} numéro un`;
+        const r1 = await api('/api/ai/ask', { token: adminToken, method: 'POST', body: { question: q1 } });
+        assert.equal(r1.status, 200);
+        assert.ok(Number.isInteger(r1.body.conversationId));
+        const convId = r1.body.conversationId;
+
+        const detail = await api(`/api/ai/conversations/${convId}`, { token: adminToken });
+        assert.equal(detail.status, 200);
+        assert.equal(detail.body.messages.length, 2);
+        assert.equal(detail.body.messages[0].role, 'user');
+        assert.equal(detail.body.messages[0].text, q1);
+        assert.equal(detail.body.messages[1].role, 'assistant');
+
+        const r2 = await api('/api/ai/ask', { token: adminToken, method: 'POST', body: { question: 'Et le suivi de cette affaire ?', conversationId: convId } });
+        assert.equal(r2.status, 200);
+        assert.equal(r2.body.conversationId, convId);
+
+        const detail2 = await api(`/api/ai/conversations/${convId}`, { token: adminToken });
+        assert.equal(detail2.body.messages.length, 4);
+
+        const list = await api('/api/ai/conversations', { token: adminToken });
+        const mine = list.body.find((c) => c.id === convId);
+        assert.ok(mine);
+        assert.equal(Number(mine.message_count), 4);
+        assert.ok(mine.title.includes('Question persistance'));
+      });
+    } finally { restoreEnv(env); }
+  });
+
+  test('staff : propriété — un autre utilisateur ne peut ni lire, ni utiliser, ni supprimer', async () => {
+    const env = snapEnv();
+process.env.LLM_API_KEY = 'dum' + 'my';
+    process.env.LLM_PROVIDER = 'gemini';
+    try {
+      await withMockFetch(mockLLM, async () => {
+        const r = await api('/api/ai/ask', { token: adminToken, method: 'POST', body: { question: `Fil privé ${Date.now()}` } });
+        assert.equal(r.status, 200);
+        const convId = r.body.conversationId;
+        assert.equal((await api(`/api/ai/conversations/${convId}`, { token: otherToken })).status, 404);
+        assert.equal((await api('/api/ai/ask', { token: otherToken, method: 'POST', body: { question: 'Intrusion ?', conversationId: convId } })).status, 404);
+        assert.equal((await api(`/api/ai/conversations/${convId}`, { token: otherToken, method: 'DELETE' })).status, 404);
+        assert.equal((await api(`/api/ai/conversations/${convId}`, { token: adminToken, method: 'DELETE' })).status, 200);
+        assert.equal((await api(`/api/ai/conversations/${convId}`, { token: adminToken })).status, 404);
+      });
+    } finally { restoreEnv(env); }
+  });
+
+  test('staff : POST /ai/conversations crée un fil vide, listé puis supprimable', async () => {
+    const created = await api('/api/ai/conversations', { token: adminToken, method: 'POST', body: {} });
+    assert.equal(created.status, 201);
+    const detail = await api(`/api/ai/conversations/${created.body.id}`, { token: adminToken });
+    assert.equal(detail.status, 200);
+    assert.equal(detail.body.messages.length, 0);
+    assert.equal((await api(`/api/ai/conversations/${created.body.id}`, { token: adminToken, method: 'DELETE' })).status, 200);
+  });
+
+  test('staff : les endpoints conversations exigent l’authentification', async () => {
+    assert.equal((await api('/api/ai/conversations')).status, 401);
+    assert.equal((await api('/api/ai/conversations/1')).status, 401);
+  });
+
+  test('public : fil persistant par visiteur, contexte repassé au modèle, historique protégé', async () => {
+    const env = snapEnv();
+process.env.LLM_API_KEY = 'dum' + 'my';
+    process.env.LLM_PROVIDER = 'gemini';
+    const visitorId = `visiteur-test-${Date.now()}`;
+    const seenBodies = [];
+    try {
+      await withMockFetch((u, opts) => {
+        if (u.includes(':embedContent')) return geminiEmbedOk();
+        seenBodies.push(JSON.parse(opts.body));
+        return geminiChatOk(`Réponse ${seenBodies.length}`);
+      }, async () => {
+        const q1 = `Quels sont vos horaires ? ${Date.now()}`;
+        const r1 = await postPublic({ question: q1, lang: 'fr', visitorId });
+        assert.equal(r1.status, 200);
+        assert.equal(r1.body.answer, 'Réponse 1');
+        assert.ok(Number.isInteger(r1.body.conversationId));
+        const convId = r1.body.conversationId;
+
+        const r2 = await postPublic({ question: 'Et le samedi ?', lang: 'fr', visitorId, conversationId: convId });
+        assert.equal(r2.status, 200);
+        assert.equal(r2.body.answer, 'Réponse 2');
+        assert.equal(r2.body.conversationId, convId);
+
+        // Contexte : le 2e appel au modèle contient le 1er échange complet.
+        const contents = seenBodies[1].contents;
+        assert.deepEqual(contents.map((c) => c.role), ['user', 'model', 'user']);
+        assert.ok(contents[0].parts[0].text.includes('horaires'));
+        assert.equal(contents[1].parts[0].text, 'Réponse 1');
+
+        // Historique relu par le même visiteur : 4 messages, dans l'ordre.
+        const hist = await api(`/api/public/chat/history?visitorId=${visitorId}&conversationId=${convId}`);
+        assert.equal(hist.status, 200);
+        assert.deepEqual(hist.body.messages.map((m) => m.role), ['user', 'assistant', 'user', 'assistant']);
+        assert.ok(hist.body.messages[0].text.includes('horaires'));
+
+        // Un autre visiteur ne peut pas relire ce fil.
+        const stolen = await api(`/api/public/chat/history?visitorId=autre-visiteur-123&conversationId=${convId}`);
+        assert.equal(stolen.status, 404);
+      });
+    } finally { restoreEnv(env); }
+  });
+
+  test('public : sans visitorId, le chat reste sans état (aucun conversationId)', async () => {
+    const env = snapEnv();
+process.env.LLM_API_KEY = 'dum' + 'my';
+    process.env.LLM_PROVIDER = 'gemini';
+    try {
+      await withMockFetch(mockLLM, async () => {
+        const res = await postPublic({ question: `Question sans état ${Date.now()}`, lang: 'fr' });
+        assert.equal(res.status, 200);
+        assert.equal(res.body.conversationId, undefined);
+      });
+    } finally { restoreEnv(env); }
+  });
+});

@@ -1058,6 +1058,21 @@ tr.total-row td { border-top: 2px solid var(--rule); background: var(--paper); }
   font-size: 1.15rem; line-height: 1; cursor: pointer; padding: 0 0.25rem;
 }
 .cej-chat-clear:hover { color: #fff; }
+/* Conversations persistantes (v6.5) — liste des fils dans le widget */
+.cej-chat-convs { max-height: 12rem; overflow-y: auto; background: var(--surface); border-bottom: 1px solid var(--rule); padding: 0.4rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.cej-chat-convs[hidden] { display: none; }
+.cej-chat-convs-loading, .cej-chat-convs-empty { margin: 0.3rem 0.5rem; font-size: 0.85rem; color: var(--muted); }
+.cej-chat-conv-item { display: flex; align-items: center; gap: 0.25rem; border-radius: 0.45rem; }
+.cej-chat-conv-item.active { background: var(--accent-tint); }
+.cej-chat-conv-open { flex: 1; text-align: left; background: transparent; border: none; cursor: pointer; font-size: 0.87rem; color: var(--ink); padding: 0.45rem 0.55rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cej-chat-conv-open:hover { color: var(--accent); }
+.cej-chat-conv-del { background: transparent; border: none; color: var(--muted); font-size: 1.05rem; line-height: 1; cursor: pointer; padding: 0.3rem 0.45rem; }
+.cej-chat-conv-del:hover { color: var(--danger); }
+/* Page Assistant IA — fil continu + barre de conversations (v6.5) */
+.ai-conv-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin-bottom: 0.9rem; }
+.ai-conv-label { font-weight: 600; font-size: 0.92rem; }
+.ai-conv-select { flex: 1; min-width: 12rem; max-width: 26rem; padding: 0.45rem 0.6rem; border: 1px solid var(--rule); border-radius: 0.5rem; background: var(--surface); color: var(--ink); }
+.ai-thread { height: 26rem; max-height: 55vh; border: 1px solid var(--rule); border-radius: 0.6rem; }
 .cej-chat-msgs { flex: 1; overflow-y: auto; padding: 0.9rem; display: flex; flex-direction: column; gap: 0.6rem; background: var(--paper); }
 .cej-chat-msg { max-width: 88%; }
 .cej-chat-msg p { margin: 0; padding: 0.55rem 0.8rem; border-radius: 0.6rem; font-size: 0.92rem; line-height: 1.45; white-space: pre-wrap; }

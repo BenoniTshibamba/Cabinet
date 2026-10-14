@@ -5,6 +5,10 @@ import { requireAuth, requirePermission, HttpError } from '../middleware/auth.js
 import { loadCaseOr404, assertVisible } from './cases.js';
 import { chat, embed, llmConfig, llmStatus } from '../services/llm.js';
 import { indexDocument, cosine } from '../services/rag.js';
+import {
+  createConversation, getOwnedConversation, listConversations,
+  getMessages, getContextMessages, addMessage, titleFromQuestion, deleteConversation,
+} from '../services/ai-conversations.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -25,16 +29,73 @@ router.post('/index-document/:id', requirePermission('ai.manage'), async (req, r
   } catch (err) { next(err); }
 });
 
+/* ------------------------------------------------------------------ */
+/* Conversations persistantes (v6.5) : le fil survit à la déconnexion  */
+/* et au changement d'appareil — il est stocké côté serveur, rattaché  */
+/* au compte.                                                          */
+/* ------------------------------------------------------------------ */
+
+router.get('/conversations', requirePermission('ai.ask'), async (req, res, next) => {
+  try {
+    res.json(await listConversations({ userId: req.user.id }, 'staff'));
+  } catch (err) { next(err); }
+});
+
+router.post('/conversations', requirePermission('ai.ask'), async (req, res, next) => {
+  try {
+    const b = z.object({ title: z.string().trim().max(120).optional() }).parse(req.body ?? {});
+    const conv = await createConversation({ userId: req.user.id, kind: 'staff', title: b.title ?? null });
+    res.status(201).json(conv);
+  } catch (err) { next(err instanceof z.ZodError ? new HttpError(400, 'invalid_body', err.issues[0].message) : err); }
+});
+
+router.get('/conversations/:id', requirePermission('ai.ask'), async (req, res, next) => {
+  try {
+    const conv = await getOwnedConversation(Number(req.params.id), { userId: req.user.id });
+    if (!conv) throw new HttpError(404, 'not_found', 'Conversation introuvable.');
+    res.json({ conversation: conv, messages: await getMessages(conv.id) });
+  } catch (err) { next(err); }
+});
+
+router.delete('/conversations/:id', requirePermission('ai.ask'), async (req, res, next) => {
+  try {
+    const ok = await deleteConversation(Number(req.params.id), { userId: req.user.id });
+    if (!ok) throw new HttpError(404, 'not_found', 'Conversation introuvable.');
+    res.json({ deleted: true });
+  } catch (err) { next(err); }
+});
+
 router.post('/ask', requirePermission('ai.ask'), async (req, res, next) => {
   try {
     const b = z.object({
       question: z.string().trim().min(2).max(5000),
       caseId: z.coerce.number().int().positive().optional(),
       lang: z.enum(['fr', 'en']).optional().default('fr'),
+      conversationId: z.coerce.number().int().positive().optional(),
     }).parse(req.body);
 
     const isClient = req.user.role === 'CLIENT';
     const lang = isClient ? b.lang : 'fr';
+    const msg = (fr, en) => (lang === 'en' ? en : fr);
+
+    // Conversation : reprise du fil demandé (propriété vérifiée) ou nouveau fil.
+    // L'historique est chargé AVANT d'enregistrer la nouvelle question, puis
+    // repassé au modèle pour que les suivis gardent leur contexte.
+    let conv = null;
+    if (b.conversationId) {
+      conv = await getOwnedConversation(b.conversationId, { userId: req.user.id });
+      if (!conv) throw new HttpError(404, 'not_found', 'Conversation introuvable.');
+    } else {
+      conv = await createConversation({ userId: req.user.id, kind: 'staff' });
+    }
+    const history = await getContextMessages(conv.id);
+
+    const finish = async (answer, sources) => {
+      await addMessage(conv.id, 'user', b.question);
+      await titleFromQuestion(conv.id, b.question);
+      await addMessage(conv.id, 'assistant', answer);
+      res.json({ answer, sources, conversationId: conv.id });
+    };
 
     let docs = [];
     if (b.caseId) {
@@ -58,15 +119,11 @@ router.post('/ask', requirePermission('ai.ask'), async (req, res, next) => {
       docs = rows;
     }
 
-    const msg = (fr, en) => (lang === 'en' ? en : fr);
     if (!docs.length) {
-      return res.json({
-        answer: msg(
-          'Je n’ai trouvé aucun document accessible pour cette recherche.',
-          'I found no accessible documents for this search.',
-        ),
-        sources: [],
-      });
+      return await finish(msg(
+        'Je n’ai trouvé aucun document accessible pour cette recherche.',
+        'I found no accessible documents for this search.',
+      ), []);
     }
 
     const ids = docs.map((d) => d.id);
@@ -81,13 +138,10 @@ router.post('/ask', requirePermission('ai.ask'), async (req, res, next) => {
     );
 
     if (!chunkRows.length) {
-      return res.json({
-        answer: msg(
-          'Les documents sont bien enregistrés, mais aucun n’est encore préparé pour la recherche. Ajoutez un document ou attendez la fin de son analyse automatique.',
-          'The documents are saved, but none is ready for search yet. Add a document or wait for its automatic analysis to finish.',
-        ),
-        sources: [],
-      });
+      return await finish(msg(
+        'Les documents sont bien enregistrés, mais aucun n’est encore préparé pour la recherche. Ajoutez un document ou attendez la fin de son analyse automatique.',
+        'The documents are saved, but none is ready for search yet. Add a document or wait for its automatic analysis to finish.',
+      ), []);
     }
 
     const questionVector = await embed(b.question);
@@ -104,13 +158,10 @@ router.post('/ask', requirePermission('ai.ask'), async (req, res, next) => {
     const MIN_SCORE = 0.3;
     const relevant = ranked.filter((x) => x.score >= MIN_SCORE);
     if (!relevant.length) {
-      return res.json({
-        answer: msg(
-          'Je n’ai trouvé aucun document pertinent pour cette question dans les dossiers accessibles.',
-          'I found no relevant document for this question in the accessible cases.',
-        ),
-        sources: [],
-      });
+      return await finish(msg(
+        'Je n’ai trouvé aucun document pertinent pour cette question dans les dossiers accessibles.',
+        'I found no relevant document for this question in the accessible cases.',
+      ), []);
     }
 
     const context = relevant.map((x, i) =>
@@ -133,20 +184,18 @@ CONTEXTE :\n${context}`;
 
     const answer = await chat([
       { role: 'system', content: system },
+      ...history,
       { role: 'user', content: b.question },
     ]);
 
-    res.json({
-      answer,
-      sources: relevant.map((x, i) => ({
-        number: i + 1,
-        documentId: x.document_id,
-        name: x.original_name,
-        caseId: x.case_id,
-        caseNumber: x.case_number,
-        score: Number(x.score.toFixed(3)),
-      })),
-    });
+    return await finish(answer, relevant.map((x, i) => ({
+      number: i + 1,
+      documentId: x.document_id,
+      name: x.original_name,
+      caseId: x.case_id,
+      caseNumber: x.case_number,
+      score: Number(x.score.toFixed(3)),
+    })));
   } catch (err) {
     next(err instanceof z.ZodError ? new HttpError(400, 'invalid_body', err.issues[0].message) : err);
   }
